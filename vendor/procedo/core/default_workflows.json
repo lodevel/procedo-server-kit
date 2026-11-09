@@ -1,0 +1,131 @@
+{
+  "text_only": {
+    "tasks": [
+      {
+        "id": "review_text_procedure",
+        "name": "Review Text Procedure",
+        "button_label": "Review Text",
+        "prompt_template": null,
+        "enabled": true,
+        "max_validator_attempts": null,
+        "selected_rules": null
+      }
+    ],
+    "chat_config": {
+      "enabled": true,
+      "system_prompt": "Task: Respond to user question or request.\n\nThe user is asking a question or making a request related to test\nprocedure authoring. Respond CONSERVATIVELY:\n\n- Only review or propose changes when the user EXPLICITLY asks for\n  them (e.g. \"review this\", \"fix the equipment IDs\", \"rewrite step 3\").\n- If the user's intent is unclear OR the message is conversational\n  (\"hi\", \"test\", \"?\", short greetings, ambiguous one-liners), ask a\n  brief clarifying question. Do NOT proactively review the procedure\n  or produce a proposal.\n- If the user asks a question, answer it without modifying artifacts.\n- Never include a proposal (procedure_json, test_code, procedure_text)\n  unless the user explicitly asked for a change."
+    }
+  },
+  "text_json": {
+    "tasks": [
+      {
+        "id": "derive_json_from_text",
+        "name": "Derive JSON from Text",
+        "button_label": "Text → JSON",
+        "prompt_template": null,
+        "enabled": true,
+        "max_validator_attempts": null,
+        "selected_rules": null
+      },
+      {
+        "id": "render_text_from_json",
+        "name": "Render Text from JSON",
+        "button_label": "JSON → Text",
+        "prompt_template": null,
+        "enabled": true,
+        "max_validator_attempts": null,
+        "selected_rules": null
+      },
+      {
+        "id": "review_text_procedure",
+        "name": "Review Text Procedure",
+        "button_label": "Review Text",
+        "prompt_template": null,
+        "enabled": true,
+        "max_validator_attempts": null,
+        "selected_rules": null
+      },
+      {
+        "id": "review_json",
+        "name": "Review JSON",
+        "button_label": "Review JSON",
+        "prompt_template": null,
+        "enabled": true,
+        "max_validator_attempts": null,
+        "selected_rules": null
+      },
+      {
+        "id": "review_text_vs_json",
+        "name": "Review Text vs JSON",
+        "button_label": "Check Text↔JSON",
+        "prompt_template": null,
+        "enabled": true,
+        "max_validator_attempts": null,
+        "selected_rules": null
+      }
+    ],
+    "chat_config": {
+      "enabled": true,
+      "system_prompt": "Task: Respond to user question or request.\n\nThe user is asking a question or making a request related to test\nprocedure authoring. Respond CONSERVATIVELY:\n\n- Only review or propose changes when the user EXPLICITLY asks for\n  them (e.g. \"review this\", \"fix the equipment IDs\", \"rewrite step 3\").\n- If the user's intent is unclear OR the message is conversational\n  (\"hi\", \"test\", \"?\", short greetings, ambiguous one-liners), ask a\n  brief clarifying question. Do NOT proactively review the procedure\n  or produce a proposal.\n- If the user asks a question, answer it without modifying artifacts.\n- Never include a proposal (procedure_json, test_code, procedure_text)\n  unless the user explicitly asked for a change."
+    }
+  },
+  "json_code": {
+    "tasks": [
+      {
+        "id": "generate_code_from_json",
+        "name": "Generate Code from JSON",
+        "button_label": "JSON → Code",
+        "prompt_template": null,
+        "enabled": true,
+        "max_validator_attempts": null,
+        "selected_rules": null
+      },
+      {
+        "id": "derive_json_from_code",
+        "name": "Derive JSON from Code",
+        "button_label": "Code → JSON",
+        "prompt_template": null,
+        "enabled": true,
+        "max_validator_attempts": null,
+        "selected_rules": null
+      },
+      {
+        "id": "review_json",
+        "name": "Review JSON",
+        "button_label": "Review JSON",
+        "prompt_template": null,
+        "enabled": true,
+        "max_validator_attempts": null,
+        "selected_rules": null
+      },
+      {
+        "id": "review_code",
+        "name": "Review Code",
+        "button_label": "Review Code",
+        "prompt_template": null,
+        "enabled": true,
+        "max_validator_attempts": null,
+        "selected_rules": null
+      },
+      {
+        "id": "review_code_vs_json",
+        "name": "Review Code vs JSON",
+        "button_label": "Check JSON↔Code",
+        "prompt_template": null,
+        "enabled": true,
+        "max_validator_attempts": null,
+        "selected_rules": null
+      }
+    ],
+    "chat_config": {
+      "enabled": true,
+      "system_prompt": "Task: Respond to user question or request.\n\nThe user is asking a question or making a request related to test\nprocedure authoring. Respond CONSERVATIVELY:\n\n- Only review or propose changes when the user EXPLICITLY asks for\n  them (e.g. \"review this\", \"fix the equipment IDs\", \"rewrite step 3\").\n- If the user's intent is unclear OR the message is conversational\n  (\"hi\", \"test\", \"?\", short greetings, ambiguous one-liners), ask a\n  brief clarifying question. Do NOT proactively review the procedure\n  or produce a proposal.\n- If the user asks a question, answer it without modifying artifacts.\n- Never include a proposal (procedure_json, test_code, procedure_text)\n  unless the user explicitly asked for a change."
+    }
+  },
+  "traceability": {
+    "chat_config": {
+      "enabled": false,
+      "system_prompt": null
+    }
+  }
+}

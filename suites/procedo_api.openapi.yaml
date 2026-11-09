@@ -1,0 +1,3150 @@
+openapi: 3.1.0
+info:
+  title: Procedo API
+  version: "1"
+  summary: The JSON contract between the Procedo app and its server, for projects, tests, releases, evidence and the library.
+  description: |
+    The machine-readable twin of `docs/server_contract/procedo_server_contract.md`: every call,
+    every object's JSON schema, the multipart bodies and the error envelope. It never differs
+    from the contract; where the two seem to, the contract's prose says what is meant. How a
+    server stores anything (a database, files, a bucket) is its own business: the twin describes
+    only what travels.
+
+    Rules a server developer reads first (data_format.md §1):
+
+    - GET reads, POST writes; nothing else.
+    - JSON carries the structure. A file is a reference `{version|sha256, size, store_id}` to a
+      storage (`GET /storages`). For a storage whose backend is `api`, the bytes are binary
+      parts of the SAME request (`multipart/form-data`) or answer (`multipart/mixed`), each part
+      named `sha256:<64 hex>` of its bytes. Never base64. For a `filesystem`, `ftps` or `sftp`
+      storage the app reads and writes the bytes there itself, at
+      `<root>/<project_id>/<sha256[0:2]>/<sha256>`, and the API carries only the reference.
+    - Text documents under `tests/`, `functions/`, `config/`, `scenarios/` travel inside the
+      JSON as `text`, whatever their size; a file sent in the wrong form refuses the request.
+    - A file over 1 MiB (1,048,576 bytes) never rides as a part: it travels alone, uploaded
+      (B1) before the JSON and downloaded (B2, `Range` honoured) after it, at
+      `/storages/{store_id}/blobs/{owner}/{sha256}`; an answer lists it without its part, and
+      a request carrying it as a part is `400 bad_request` (`details.large`). B1 is held to
+      `limits.max_file_bytes`, every other request to `limits.max_upload_bytes`.
+    - Reads take `have` (the versions the client holds); those parts are left out. A long
+      `have` goes to the `POST …/read` twin of the read (P2b, P6, P7, P8b, E3, E5, L2); E9,
+      one artifact's one file, needs none.
+    - An `api` file the server cannot give is listed in its object's `missing`, never hides
+      it (Run, Artifact, Project, ProjectChanges, Test, Release, LibraryItem).
+    - Project paths compare as names (NFC, case folding), and each of their names is one every
+      PC creates as spelled (data_format.md §2); `bundle/`, `releases/`, the evidence and the
+      app's machine and bench state never travel as files (§4.2).
+    - Writes put the bytes first, then the JSON; a reference to absent bytes is refused with
+      `409 missing_files`, nothing written.
+    - Each item has a version; a write names the one it replaces; a changed item alone is
+      refused. A run is written once. Every write may be replayed with the same bytes.
+    - Times are UTC ISO 8601 with `Z`, seconds (phase times and `server_time`: milliseconds).
+    - Unknown fields are kept: every object schema allows additional properties, which a server
+      stores and returns unchanged. One sent as `null` is "not known": not kept, it reads back
+      absent; inside an unknown field's value everything is kept, `null` included.
+    - In a request an optional field may be absent or `null` (both: not known); the schemas
+      give the answer's form, where a field with no value is absent, never null, except where
+      null is itself a value (data_format.md §2).
+    - Names (`test`, `serial`, `part_number`, `board_revision`, an artifact's `name`) are
+      stored in NFC and compared by NFC then case folding; the first spelling met is the one
+      every answer gives. The board's three are never "" (absent: none) and never begin or end
+      with a blank: `400 bad_request`. A board field's `name` is compared exactly.
+    - The values of `extra`, `fields` and `details` are strings.
+    - A query parameter a call does not define is refused, never ignored: `400
+      unsupported_filter` on E2 and E8, `400 bad_request` elsewhere.
+    - The order of checks (contract §2.13): a request breaking several rules is answered for
+      the first in this order: the body's size from the headers (`411`, then `413`, before the
+      token and the path), the token (`401`), the call (`405`/`501`), the request's form (`400`:
+      a path id, an undefined or repeated query parameter, the `Content-Type`, a body that does
+      not parse, a part over 1 MiB), the login's roles (`403`), then the call's own checks, what
+      it names (`404`) before what it asks against what is held (`409`, `422`). P9 looks for its
+      project (`403`, then its `404`) before reading its body.
+    - Every login reads; a role only adds writes (data_format.md §5.2).
+    - Every test has a hidden `test_id` (a lower-case UUID), kept in `tests/<test>/test.json`
+      beside `active`; the server reads it there. A test's releases, its runs and a board's
+      current-run mark are filed under its `test_id`, never its name
+      (`/projects/{project_id}/releases/{test_id}`, `…/boards/{serial}/tests/{test_id}/current`);
+      a rename moves none of them. A Draft, a Release, a Run and a TestPointer carry it
+      (data_format.md §4.3–§4.5, §4.13).
+    - The transport is `web_api_spec.md`: base address and prefix (§3.0), /info (§3.1), bearer
+      auth (§6), TLS, timeouts, persistent connections (§7), the error envelope (§5),
+      `X-Bench-Store: v1` and `X-Request-Id` on every answer, gzip on JSON (a multipart body's
+      JSON part may carry its own `Content-Encoding: gzip`). A reverse proxy in front streams a
+      request's body to the API as it arrives (the answer to an upload within 30 s of its last
+      byte) and starts each answer within 30 s (contract §3.6).
+servers:
+  - url: "{base}api/v1"
+    description: The configured base address, normalized to one trailing slash, plus api/v1.
+    variables:
+      base:
+        default: "https://serve.com/testprocedure/"
+security:
+  - bearer: []
+tags:
+  - name: server
+    description: Discovery, storages, benches.
+  - name: projects
+    description: A project and its files (web_api_projects.md).
+  - name: tests
+    description: Tests, drafts and releases.
+  - name: evidence
+    description: Runs, boards, pointers, annotations, artifacts (data_format.md §5.2, §6).
+  - name: manager
+    description: Soft delete, restore, purge. Only a login with the manager role (an importer may replay a delete, data_format.md §6.10).
+  - name: library
+    description: Bundles, configurations, report and export templates (data_format.md §4.16, §5.3).
+
+paths:
+
+  /info:
+    get:
+      tags: [server]
+      operationId: getInfo
+      summary: Discovery (web_api_spec.md §3.1)
+      description: Also tells the app this login's roles (`bench`, `publisher`, `importer`, `manager`, `reader`).
+      responses:
+        "200":
+          description: The server's name, its API versions, its clock, its limits and this login.
+          headers:
+            X-Bench-Store: {$ref: "#/components/headers/XBenchStore"}
+            X-Request-Id: {$ref: "#/components/headers/XRequestId"}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Info"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /storages:
+    get:
+      tags: [server]
+      operationId: listStorages
+      summary: S1 - where file bytes are
+      responses:
+        "200":
+          description: This server's instance id and its storages.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/StorageList"}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      tags: [server]
+      operationId: declareStorage
+      summary: S2 - declare a project's own storage
+      description: |
+        A project's configuration may keep files in a storage the server never uses. The app
+        writes there itself and declares it so the server's information is complete
+        (data_format.md §3.1). The same `identity` (compared exactly, as the app composes it)
+        declared again answers `already` with the Storage as first declared, its `params`
+        unchanged. `reachable` says whether the server reads it; the server never cleans it.
+        A `params` value that is not a string, or a key named for a secret (`password`,
+        `passwd`, `passphrase`, `secret`, `private_key`, `token`, by case folding): `400
+        bad_request`; any other key is kept.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/StorageDeclaration"}
+      responses:
+        "200":
+          description: Declared, or already declared.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/StorageDeclared"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /storages/{store_id}/to_delete:
+    parameters:
+      - {name: store_id, in: path, required: true, schema: {type: integer}}
+    get:
+      tags: [server]
+      operationId: listBlobsToDelete
+      summary: S3 - blobs nothing references any more, in a project's own storage
+      description: |
+        By project: a blob is a project's, and is listed once nothing in its project
+        references it. The app sets each aside, reports it (S4) and deletes it or puts it back
+        as S4 answers (data_format.md §6.7). Only for a declared storage: an unknown
+        `store_id` is `404 not_found`, one of the server's own `400 bad_request`.
+      responses:
+        "200":
+          description: The blobs to delete.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BlobsToDelete"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /storages/{store_id}/deleted:
+    parameters:
+      - {name: store_id, in: path, required: true, schema: {type: integer}}
+    post:
+      tags: [server]
+      operationId: reportBlobsDeleted
+      summary: S4 - the app set these blobs aside to delete them from a project's own storage
+      description: |
+        The app renamed each `<sha256>` to `<sha256>.<writer>.deleting` beside it, then reports
+        them. The server drops from its list those still referenced by nothing (`delete`: the
+        app deletes its set-aside copy) and names those a push referenced since S3 listed them
+        (`keep`: the app renames its copy back, or deletes it when `<sha256>` is there again).
+        So a delete never loses a blob a push referenced meanwhile (data_format.md §6.7).
+        Errors as S3.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/BlobsSetAside"}
+      responses:
+        "200":
+          description: What to delete, what to put back, and what S3 now lists.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BlobsSetAsideResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /storages/{store_id}/blobs/{owner}/{sha256}:
+    parameters:
+      - {name: store_id, in: path, required: true, schema: {type: integer}, description: "An `api` storage; any other is `400 bad_request`, an unknown one `404 not_found`."}
+      - name: owner
+        in: path
+        required: true
+        description: The `project_id` the file belongs to, or `library` for a library archive, as in a storage's layout (data_format.md §3.2). A blob is its owner's.
+        schema:
+          oneOf:
+            - {$ref: "#/components/schemas/ProjectId"}
+            - {const: library}
+      - name: sha256
+        in: path
+        required: true
+        description: The file's sha256, bare (a `sha256:` prefix is `400 bad_request`).
+        schema: {$ref: "#/components/schemas/Sha256Hex"}
+    get:
+      tags: [server]
+      operationId: downloadBlob
+      summary: B2 - one large file of an api storage, alone (data_format.md §3.4b)
+      description: |
+        The bytes the owner holds, any file (one of at most 1 MiB too, for a client that holds
+        no part of it); another project's are out of reach (`404 not_found`). One
+        `Range: bytes=<first>-[<last>]` or `bytes=-<n>` answers `206` with `Content-Range`, so a
+        broken download resumes where it stopped; several ranges, or one the server does not
+        read, answer the whole file (`200`); a range past the end is `416
+        range_not_satisfiable` (kind `corrupt`) with `Content-Range: bytes */<size>`.
+      parameters:
+        - name: Range
+          in: header
+          required: false
+          schema: {type: string, examples: ["bytes=700000-"]}
+      responses:
+        "200":
+          description: The whole file.
+          headers:
+            Accept-Ranges: {schema: {type: string, const: bytes}}
+          content:
+            application/octet-stream:
+              schema: {type: string, contentMediaType: application/octet-stream}
+        "206":
+          description: The range asked for.
+          headers:
+            Accept-Ranges: {schema: {type: string, const: bytes}}
+            Content-Range: {schema: {type: string, examples: ["bytes 700000-1535999/1536000"]}}
+          content:
+            application/octet-stream:
+              schema: {type: string, contentMediaType: application/octet-stream}
+        "404": {$ref: "#/components/responses/Error"}
+        "416":
+          $ref: "#/components/responses/Error"
+          description: "`range_not_satisfiable` (kind `corrupt`), with `Content-Range: bytes */<size>`: drop the partial copy and download the file whole."
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      tags: [server]
+      operationId: uploadBlob
+      summary: B1 - upload one large file to an api storage, before the JSON that references it
+      description: |
+        The file's bytes as the whole body. `already` when the owner holds them whole (a
+        damaged copy is replaced). A body whose hash is not the path's: `422 digest_mismatch`.
+        Held to `limits.max_file_bytes` (`413 too_large`, `details.max_file_bytes`, before the
+        body is read), never to `max_upload_bytes`. Who: `bench` or `importer` for a project's
+        file, `bench` or `publisher` for `library`; another login `403 forbidden`. An upload
+        nothing references yet is kept at least 24 hours, then may be reclaimed (a write that
+        finds it gone answers `409 missing_files`). A file of at most 1 MiB may be sent this way
+        too, when its parts would take a request over `max_upload_bytes`. The owner need not
+        exist yet: for a `project_id` the server holds nothing for (a new project's file before
+        its P11, a first run's before its E1) the upload is `saved`, and the JSON that follows
+        finds the bytes held. Checked in this order: the path's form and the `Content-Type`
+        (`400`), the owner's role (`403`), the storage (unknown `404`, not `api` `400`), the
+        bytes (`422`).
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: {type: string, contentMediaType: application/octet-stream}
+      responses:
+        "200":
+          description: Held now.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BlobSaved"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "413": {$ref: "#/components/responses/Error"}
+        "422": {$ref: "#/components/responses/Error"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /benches:
+    get:
+      tags: [server]
+      operationId: listBenches
+      summary: E14 - the benches the server has seen
+      responses:
+        "200":
+          description: Every bench.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [benches]
+                properties:
+                  benches:
+                    type: array
+                    items: {$ref: "#/components/schemas/Bench"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects:
+    get:
+      tags: [projects]
+      operationId: listProjects
+      summary: P1 - every project whose files this server keeps, without files, bundle and releases
+      description: |
+        Ordered by name (case folded). A project the server knows only by its evidence is not
+        listed: its files live elsewhere (data_format.md §5.1).
+      responses:
+        "200":
+          description: The projects.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [projects]
+                properties:
+                  projects:
+                    type: array
+                    items: {$ref: "#/components/schemas/Project"}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      tags: [projects]
+      operationId: createProject
+      summary: P11 - a new project
+      description: |
+        `config/config.json` among the files holds the `project_id`. `name` names the project's
+        folder: one name every PC creates (no `/`, `\`, control character, `<>:"|?*`,
+        trailing dot or blank, nor a device name such as `CON`), else `400 bad_request`.
+        `409 exists` when a project with that `project_id`, or that name (case folded), is
+        held already, except the same name, files and bundle again: a replay, answered with the
+        Project. A project known only by its evidence takes its files here, its evidence kept.
+        A path that never travels (data_format.md §4.2), or one a PC cannot hold, is `400
+        bad_request`; so is a test folder whose `test.json` holds no lower-case UUID as
+        `test_id`, or two tests holding one `test_id` (data_format.md §4.3). `drafts` as P9's.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: {$ref: "#/components/schemas/ProjectCreateMultipart"}
+            encoding:
+              json: {contentType: application/json}
+          application/json:
+            schema: {$ref: "#/components/schemas/ProjectCreate"}
+      responses:
+        "200":
+          description: Created, or the same request again. The whole Project (files, bundle, `releases` `{}`), as plain JSON.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Project"}
+        "409":
+          $ref: "#/components/responses/Conflict"
+          description: "`exists`: a project with that project_id or that name is held; `missing_files`."
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      tags: [projects]
+      operationId: getProject
+      summary: P2 the whole project, or P3 what changed since a token
+      description: |
+        P2 answers the Project with its files, bundle and releases (each test's, with their
+        documents, by test_id): one request opens it. P3 (`since`) answers what changed since the
+        token: the files as they are now, the paths deleted, the bundle when it changed, and each
+        test_id whose releases changed (one made or imported) with its whole list now. Any token
+        the server cannot answer from is `410 gone`; an empty `since`, `400`. A project known only
+        by its evidence: `404`. A working copy reads on from the token of its last read (P2, P3),
+        never from the token P9 answers.
+      parameters:
+        - $ref: "#/components/parameters/Have"
+        - name: since
+          in: query
+          required: false
+          description: A change token, opaque, as the client's last read (P2, P3) answered it. Present, the answer is a ProjectChanges.
+          schema: {type: string, minLength: 1}
+      responses:
+        "200":
+          description: The Project (P2) or the ProjectChanges (P3), with the parts of api-stored files not in `have`.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ProjectOrChanges"}
+            multipart/mixed:
+              schema: {$ref: "#/components/schemas/ProjectAnswerMultipart"}
+        "410": {$ref: "#/components/responses/Gone"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/read:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [projects]
+      operationId: readProject
+      summary: P2b - P2 or P3 with `have` in the body (a read; changes nothing)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                have: {$ref: "#/components/schemas/VersionList"}
+                since: {type: string}
+      responses:
+        "200":
+          description: As GET /projects/{project_id}.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ProjectOrChanges"}
+            multipart/mixed:
+              schema: {$ref: "#/components/schemas/ProjectAnswerMultipart"}
+        "410": {$ref: "#/components/responses/Gone"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/changes:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [projects]
+      operationId: pushChanges
+      summary: P9 - writes, deletes, moves, drafts and a new bundle in one request
+      description: |
+        Each change is all-or-nothing for its path; the request as a whole is not a
+        transaction. A changed file is refused alone (`changed`, with `current`). A reference to
+        bytes that are not where it says refuses the whole request: `409 missing_files`; so does
+        a malformed change (`400`): a path a PC cannot hold, a file in the wrong form.
+
+        A change the server already satisfies is a replay (rule 8), `saved` and nothing written,
+        whatever its `replaces` says: a write of the version held, a delete of a file that is
+        gone, a move already made. Writing nothing, it moves no token: a request sent again
+        whose every change is satisfied answers the token held before it, and P3 from that
+        token brings nothing. A path that never travels (data_format.md §4.2) is `refused`
+        (kind `invalid`). A move names every file it moves (`replaces_folder`); when the folder
+        does not hold exactly those, or the destination holds a file, it is `changed`, nothing
+        moved, with no `current` (a folder is no File: the next P3 brings what changed). A move
+        into itself, or one that would change a file's form (text under the four folders, a
+        reference elsewhere) or make it a file that never travels, is `refused` (kind
+        `invalid`).
+
+        A test's id (data_format.md §4.3): the changes are checked in the order sent, each
+        against the project as it is at that point; one after which a test folder holding a file
+        would hold no `test.json` whose `test_id` is a lower-case UUID, or two tests would hold
+        one `test_id`, is `refused` (kind `invalid`), nothing written for it. The app sends a
+        new test's `test.json` before its other files and deletes it after them.
+
+        `drafts`: one per test whose documents the request changes, with its `test_id`, as the
+        app computed them. A draft is kept when its test exists after the request, its `test_id`
+        is the one that test's `test.json` then holds, and every change under its folder and
+        under `functions/` was saved; a test whose files changed without a draft kept loses the
+        draft it held. A draft has no result of its own and moves no token.
+
+        A test whose last file goes is deleted: its draft goes; its releases stay under its
+        `test_id`.
+
+        The answer's `token` is the project's after this request; a working copy never reads on
+        from it (its next P3 starts from the token of its last read).
+
+        A test renamed by moving its folder (`tests/<old>/` → `tests/<new>/`) takes its draft
+        and its `test.json` with it, so its `test_id` stays; its releases, runs and current-run
+        marks are filed under that id and stay where they are (data_format.md §6.9). A rename
+        moves no evidence. Any name no test holds now may be taken. A test deleted here leaves
+        its releases, runs and marks under its `test_id`. A project the server knows only by
+        its evidence: `404 not_found`, before the body is read (as P2-P8 and P10).
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: {$ref: "#/components/schemas/ChangesMultipart"}
+            encoding:
+              json: {contentType: application/json}
+          application/json:
+            schema: {$ref: "#/components/schemas/ChangesRequest"}
+      responses:
+        "200":
+          description: One result per change, in order.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ChangesResult"}
+        "404":
+          $ref: "#/components/responses/Error"
+          description: "`not_found`: no such project, or one the server knows only by its evidence (checked before the body is read)."
+        "409":
+          $ref: "#/components/responses/Conflict"
+          description: "`missing_files` (details.missing)."
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/tests:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      tags: [tests]
+      operationId: listTests
+      summary: P4 the tests without documents, or P5 named tests with their documents
+      parameters:
+        - name: names
+          in: query
+          required: false
+          description: Comma-separated test names (a name holding a comma is asked with P6). Present, the answer is a TestsByName with documents, keyed by each name as asked.
+          schema: {type: string}
+        - $ref: "#/components/parameters/Have"
+      responses:
+        "200":
+          description: "P4 `{token, tests: [Test]}` or P5 `{token, tests: {name: Test}, missing}`."
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/TestList"
+                  - $ref: "#/components/schemas/TestsByName"
+            multipart/mixed:
+              schema: {$ref: "#/components/schemas/TestsByNameMultipart"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/tests/read:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [tests]
+      operationId: readTests
+      summary: P6 - P5 with the names and `have` in the body
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [names]
+              properties:
+                names:
+                  type: array
+                  items: {type: string}
+                have: {$ref: "#/components/schemas/VersionList"}
+      responses:
+        "200":
+          description: As P5.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TestsByName"}
+            multipart/mixed:
+              schema: {$ref: "#/components/schemas/TestsByNameMultipart"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/tests/{test}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/Test"
+    get:
+      tags: [tests]
+      operationId: getTest
+      summary: P7 - one test with its documents
+      description: |
+        Its documents are every file under `tests/<test>/` and every file under `functions/`
+        (a server reads no code). A test this project does not hold: `404 not_found`.
+      parameters:
+        - $ref: "#/components/parameters/Have"
+      responses:
+        "200":
+          description: The Test.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Test"}
+            multipart/mixed:
+              schema: {$ref: "#/components/schemas/TestMultipart"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/tests/{test}/read:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/Test"
+    post:
+      tags: [tests]
+      operationId: readTest
+      summary: P7 with `have` in the body (a read; changes nothing)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/HaveRequest"}
+      responses:
+        "200":
+          description: As P7.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Test"}
+            multipart/mixed:
+              schema: {$ref: "#/components/schemas/TestMultipart"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/releases/{test_id}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/TestIdPath"
+    get:
+      tags: [tests]
+      operationId: listReleases
+      summary: P8 - the releases filed under a test id, without documents
+      description: |
+        Every release under that test_id, whether or not a test of the project holds the id
+        now (a deleted test's stay under it). An id with no release answers `[]`.
+      responses:
+        "200":
+          description: Oldest first; each keeps the `test` name it was released under.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [releases]
+                properties:
+                  releases:
+                    type: array
+                    items: {$ref: "#/components/schemas/Release"}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+          description: "`bad_request`: the path's test_id is not a lower-case UUID."
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      tags: [tests]
+      operationId: release
+      summary: P10 - release the test that holds this test id; the server gives the number
+      description: |
+        The test released is the one whose `test.json` holds the path's `test_id` (none: `404
+        not_found`). `files` names the version of each file released, and only those are kept,
+        by their names in the test (a path under `tests/<test>/` less that folder, a
+        `functions/` path whole; two taking one name: `400`). `409 changed` when a named file
+        version is no longer the server's (details.current has the test's documents now,
+        details.changed the paths); `409 same_as_release` when `content` is that of a release
+        under the same test_id. The number is one more than the highest under that test_id (1
+        for a test never released, whatever its name); the release's `test` is the test's name
+        now. With `"import": true` (importer role, data_format.md §6.10) the release is filed
+        under the path's test_id whether or not a test holds it now, keeps the `version`,
+        `released_at` and `test` sent, and may carry its own `documents` in place of `files`,
+        their binary bytes as parts of a multipart request; the same release again answers it,
+        a version number taken by another is `409 changed`. An import under an id no test of the
+        project holds must carry `test` and `documents` (`files` names a test's files, and there
+        is none): without either, `400 bad_request`.
+
+        A `test_id` in the body is ignored: the path's test_id is the one released.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ReleaseRequest"}
+          multipart/form-data:
+            schema: {$ref: "#/components/schemas/ReleaseRequestMultipart"}
+            encoding:
+              json: {contentType: application/json}
+      responses:
+        "200":
+          description: The new Release, without its documents.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Release"}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+          description: "`bad_request`: the path's test_id is not a lower-case UUID; an import under an id no test holds without `test` or without `documents`."
+        "404":
+          $ref: "#/components/responses/Error"
+          description: "`not_found`: no test of the project holds this test_id (not an import)."
+        "409": {$ref: "#/components/responses/Conflict"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/releases/{test_id}/{version}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/TestIdPath"
+      - name: version
+        in: path
+        required: true
+        schema: {type: integer, minimum: 1}
+    get:
+      tags: [tests]
+      operationId: getRelease
+      summary: P8b - one release with its documents
+      description: A version the test_id does not hold is `404 not_found`.
+      parameters:
+        - $ref: "#/components/parameters/Have"
+      responses:
+        "200":
+          description: The Release.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Release"}
+            multipart/mixed:
+              schema: {$ref: "#/components/schemas/ReleaseMultipart"}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+          description: "`bad_request`: the path's test_id is not a lower-case UUID."
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/releases/{test_id}/{version}/read:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/TestIdPath"
+      - name: version
+        in: path
+        required: true
+        schema: {type: integer, minimum: 1}
+    post:
+      tags: [tests]
+      operationId: readRelease
+      summary: P8b with `have` in the body (a read; changes nothing)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/HaveRequest"}
+      responses:
+        "200":
+          description: As P8b.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Release"}
+            multipart/mixed:
+              schema: {$ref: "#/components/schemas/ReleaseMultipart"}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+          description: "`bad_request`: the path's test_id is not a lower-case UUID."
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/runs:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [evidence]
+      operationId: pushRun
+      summary: E1 - push one run (bench)
+      description: |
+        The files are put in their storage first (data_format.md §3.5); for an `api` storage
+        they are parts of this request. One step, all or nothing: check every file's bytes are
+        there, in this project (else `409 missing_files`; a blob held but damaged counts as
+        missing), create the project and the board when new (a format-1 run's board is the "no
+        part number" one, data_format.md §4.5), store the run (a replay with the same JSON,
+        every encoding undone, answers `already`, and a deleted run stays deleted; another run
+        under the same id is `409 run_conflict`, kind `corrupt`; a run_id a manager purged is
+        `409 deleted`), file it under its `test_id` and apply the pointer rule to that test
+        id's mark on the board. A format-2 run with `lot` is `400
+        bad_request`. With `"import": true` (importer role, data_format.md §6.10) the run keeps
+        the `pushed_at` sent and moves no pointer; everything else is checked as for a bench.
+
+        Parts: one that no api-stored file names is ignored; two with one name, or one whose
+        size is not its file's, `400 bad_request`; one whose bytes do not match its name,
+        `422 digest_mismatch`.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: {$ref: "#/components/schemas/RunMultipart"}
+            encoding:
+              json: {contentType: application/json}
+          application/json:
+            schema: {$ref: "#/components/schemas/RunPush"}
+      responses:
+        "200":
+          description: Saved, or already there.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RunPushResult"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /runs:
+    get:
+      tags: [evidence]
+      operationId: searchRuns
+      summary: E2 - search runs, across projects when project_id is absent (paged)
+      description: |
+        Every text filter compares by case folding (NFC then casefold), except `field`, compared
+        exactly as the project's configuration spells it. A parameter not listed here is `400
+        unsupported_filter`. Rows newest first by `run_id`, descending (its start: an incomplete
+        run sits where its start puts it), then by `project_id`, ascending (data_format.md §6.2).
+      parameters:
+        - {name: project_id, in: query, schema: {type: string, format: uuid}}
+        - {name: serial, in: query, schema: {type: string}}
+        - name: test_id
+          in: query
+          description: |
+            That test's runs (data_format.md §4.5), whatever names it had; the app finds a
+            test's runs with it. Not a lower-case UUID: `400 bad_request`, before the project's
+            existence is looked at (not `unsupported_filter`, which is for a filter not listed).
+          schema: {$ref: "#/components/schemas/TestId"}
+        - name: test
+          in: query
+          description: Runs that recorded this name (a Run's `test`, by case folding), whichever test that was and whatever it is called now; no rename is followed.
+          schema: {type: string}
+        - {name: operator, in: query, schema: {type: string}}
+        - {name: machine_id, in: query, schema: {$ref: "#/components/schemas/MachineId"}}
+        - {name: firmware_version, in: query, schema: {type: string}}
+        - name: part_number
+          in: query
+          description: The run's board has that value; empty selects none (the "no part number" board, where every format-1 run is).
+          schema: {type: string}
+        - name: board_revision
+          in: query
+          description: The run's board has that value; empty selects none (the "no part number" board).
+          schema: {type: string}
+        - name: lot
+          in: query
+          description: Runs on a board whose lot is that value, and format-1 runs that recorded it (data_format.md §4.5).
+          schema: {type: string}
+        - name: field
+          in: query
+          description: |
+            With `field_value`: runs with that value for one of the project's own fields, the
+            run's (`extra`) or its board's (`details`). The field's name is compared exactly;
+            the value, a string, by case folding. The server may answer it slower.
+          schema: {type: string}
+        - {name: field_value, in: query, schema: {type: string}}
+        - name: verdict
+          in: query
+          description: One or more verdicts, comma-separated.
+          schema: {type: string}
+        - {name: test_version, in: query, schema: {type: integer, minimum: 1}}
+        - {name: definition_sha256, in: query, schema: {$ref: "#/components/schemas/Sha256Hex"}}
+        - {name: draft, in: query, schema: {type: boolean}}
+        - name: from
+          in: query
+          description: "`ended` >= from; a run with no `ended` never matches."
+          schema: {$ref: "#/components/schemas/Time"}
+        - name: to
+          in: query
+          description: "`ended` < to; a run with no `ended` never matches."
+          schema: {$ref: "#/components/schemas/Time"}
+        - name: measurement
+          in: query
+          description: |
+            Runs with a measurement of this name, in any phase and attempt. With a bound, its
+            value_num within value_min and value_max, both inclusive (no value_num: no match);
+            with no bound, any value. A bound without measurement is `400 bad_request`.
+          schema: {type: string}
+        - {name: value_min, in: query, schema: {type: number}}
+        - {name: value_max, in: query, schema: {type: number}}
+        - name: deleted
+          in: query
+          schema: {type: string, enum: [exclude, include, only], default: exclude}
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Newest first by `run_id` (descending), then `project_id` (ascending). `cursor` null when complete.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RunList"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/runs/{run_id}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/RunIdPath"
+    get:
+      tags: [evidence]
+      operationId: getRun
+      summary: E3 - one run, complete, with its api-stored files as parts
+      parameters:
+        - $ref: "#/components/parameters/Have"
+      responses:
+        "200":
+          description: The Run (deleted runs still answer, with deleted_* set). A run this project does not hold, `404 not_found`.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Run"}
+            multipart/mixed:
+              schema: {$ref: "#/components/schemas/RunMultipart"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/runs/{run_id}/read:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/RunIdPath"
+    post:
+      tags: [evidence]
+      operationId: readRun
+      summary: E3 with `have` in the body
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/HaveRequest"}
+      responses:
+        "200":
+          description: As E3.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Run"}
+            multipart/mixed:
+              schema: {$ref: "#/components/schemas/RunMultipart"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/runs/{run_id}/annotation:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/RunIdPath"
+    post:
+      tags: [evidence]
+      operationId: saveAnnotation
+      summary: E7 - add comment or override entries; nothing is ever replaced
+      description: |
+        Each entry is added to the run's history, in the order sent. `saved` when its
+        `replaces` was the key's current entry, or the key had no entry yet (whatever its
+        `replaces`); `changed` when someone saved that key meanwhile (the entry is kept, not
+        current; the current one is answered); `already` for an entry_id the run holds (a
+        replay), whatever else the entry sent. A run a manager deleted takes no entry: `409
+        deleted`. With `"import": true` (importer role, data_format.md §6.10) each entry keeps
+        its `received_at`, or stays without one.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AnnotationPush"}
+      responses:
+        "200":
+          description: One result per entry, in order.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AnnotationResult"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/runs/{run_id}/delete:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/RunIdPath"
+    post:
+      tags: [manager]
+      operationId: deleteRun
+      summary: E11 - soft delete (a login with the manager role)
+      description: |
+        Deleting the current run hands the pointer to the newest remaining complete run not
+        deleted (latest `ended`, then greatest `run_id`); when none remains the test has no
+        pointer on that board any more and the answer's `pointer` is null. A delete without a
+        `reason`, or with a blank one, is refused: `400 bad_request`. The bench's `station` and
+        the name typed (`deleted_by_name`) are kept as `deleted_station` and `deleted_by_name`;
+        `deleted_by` is the login. Deleting a deleted run is a replay: `200`, unchanged (the
+        first reason stays), no `pointer`. With `"import": true` (importer role) the delete
+        keeps the `deleted_*` fields sent and hands nothing on: a pointer naming the run keeps
+        naming it (E5 answers it so, the run's `current` stays true) until the importer sets it
+        (E6) or a purge hands it on. A `station` or `deleted_by_name` of `""`: `400
+        bad_request`, nothing deleted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DeleteRequest"}
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DeleteResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/runs/{run_id}/restore:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/RunIdPath"
+    post:
+      tags: [manager]
+      operationId: restoreRun
+      summary: E11 - restore (manager); a run current when deleted is current again by the pointer rule
+      description: |
+        Puts the run back as it was. A run that was current when deleted (`deleted_was_current`)
+        becomes current again by the pointer rule (data_format.md §4.13): when the test has no
+        pointer on that board, or the pointer's `ended` is earlier than the run's. Otherwise it
+        stays in the history and E6 can still set it. The folder storages do the same.
+        Restoring a run that is not deleted is a replay: `200`, unchanged, no `pointer`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ManagerRequest"}
+      responses:
+        "200":
+          description: Restored.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DeleteResult"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/boards:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      tags: [evidence]
+      operationId: listBoards
+      summary: E4 - the project's boards, without entries
+      description: |
+        Each filter is optional: absent, any; empty, none. Bench's revision list asks with the
+        part number, its serial list with both. Ordered by part number, then revision, then
+        serial, each ascending by case folding, "none" first. A board is never removed: one
+        whose runs are all deleted is still listed. A project the server never saw has no
+        boards.
+      parameters:
+        - {name: part_number, in: query, schema: {type: string}}
+        - {name: board_revision, in: query, schema: {type: string}}
+      responses:
+        "200":
+          description: Every board that matches, without its entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [boards]
+                properties:
+                  boards:
+                    type: array
+                    items: {$ref: "#/components/schemas/Board"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/operators:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      tags: [evidence]
+      operationId: listOperators
+      summary: E16 - the operators recorded on the project's runs
+      description: |
+        Every operator a run of the project recorded (a Run's `operator`), each once: names that
+        differ only by case folding are one, answered in the spelling first received. A deleted
+        run's operator is listed, as E4 lists a board whose runs are all deleted; a run with no
+        operator adds none. Ordered ascending by case folding. A project the server never saw
+        has none. For Search Results' Operator proposals.
+      responses:
+        "200":
+          description: Every operator, each once.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [operators]
+                properties:
+                  operators:
+                    type: array
+                    items: {type: string}
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/readings:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      tags: [evidence]
+      operationId: listReadings
+      summary: E17 - the readings recorded on one test's runs
+      description: |
+        Every measurement name recorded on the runs that recorded the test name `test` (a Run's
+        `test`, compared by case folding as E2's `test` filter, following no rename), in any
+        phase and attempt: the names E2's `measurement` filter finds that test's runs by.
+        Names that differ only by case folding are one reading, answered in the spelling first
+        received, with the `units` of the first measurement received under that name that
+        carries one (absent when none does). A deleted run's readings are listed, as E16 lists
+        its operator. Ordered ascending by the name's case folding. A test with no measurement,
+        and a project the server never saw, have none. `test` missing or empty: 400
+        bad_request, a fault of the request's form (2.13, step 5). For Search Results'
+        Measurement proposals.
+      parameters:
+        - name: test
+          in: query
+          required: true
+          description: The test's name, as runs recorded it; compared by case folding.
+          schema: {type: string, minLength: 1}
+      responses:
+        "200":
+          description: Every reading of the test, each once.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [readings]
+                properties:
+                  readings:
+                    type: array
+                    items:
+                      type: object
+                      required: [name]
+                      properties:
+                        name: {type: string, minLength: 1}
+                        units: {type: string, minLength: 1}
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/boards/{serial}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/SerialPath"
+      - $ref: "#/components/parameters/PartNumber"
+      - $ref: "#/components/parameters/BoardRevision"
+    get:
+      tags: [evidence]
+      operationId: getBoard
+      summary: E5 - a board's results in one answer (not paged)
+      description: |
+        The board with its lot, its fields and their history, then per test_id (ordered by
+        test_id, byte order of the lower-case UUID) its pointer and
+        every run not deleted, newest first by run_id; a test_id whose runs are all deleted is
+        not listed, and `last_ended` counts only runs not deleted. A board the server does not know
+        (in a project it may never have seen) is not an error: the answer is the board with no
+        runs and no entries, as Bench shows a new board.
+      parameters:
+        - name: include
+          in: query
+          description: "`current` adds each test_id's current Run in full, with parts."
+          schema: {type: string, enum: [current]}
+        - $ref: "#/components/parameters/Have"
+      responses:
+        "200":
+          description: The BoardResults.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BoardResults"}
+            multipart/mixed:
+              schema: {$ref: "#/components/schemas/BoardResultsMultipart"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/boards/{serial}/read:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/SerialPath"
+      - $ref: "#/components/parameters/PartNumber"
+      - $ref: "#/components/parameters/BoardRevision"
+    post:
+      tags: [evidence]
+      operationId: readBoard
+      summary: E5 with `have` (and include) in the body
+      description: The board stays in the query, as in the GET; only `have` and `include` go in the body (data_format.md §3.4).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/HaveRequest"
+                - type: object
+                  properties:
+                    include: {type: string, enum: [current]}
+      responses:
+        "200":
+          description: As E5.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BoardResults"}
+            multipart/mixed:
+              schema: {$ref: "#/components/schemas/BoardResultsMultipart"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/boards/{serial}/tests/{test_id}/current:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/SerialPath"
+      - $ref: "#/components/parameters/PartNumber"
+      - $ref: "#/components/parameters/BoardRevision"
+      - $ref: "#/components/parameters/TestIdPath"
+    post:
+      tags: [evidence]
+      operationId: setCurrent
+      summary: E6 - set (promote) or clear (demote) the current run
+      description: |
+        The mark is the board's for that test_id (data_format.md §4.13). The run must be this
+        project's, on that board, of that test_id and not deleted (else `404 not_found`), and
+        complete (else `400 bad_request`). A request the pointer already satisfies (it names
+        that run, or names none and the request clears) is a replay: `saved`, nothing written,
+        whatever `replaces` says. With no pointer yet, `replaces: null` matches; any other
+        `replaces` on a set is `changed` with `{test_id, run_id: null}`, and a clear is already
+        satisfied: `saved` with `{test_id, run_id: null}`, nothing written, whatever `replaces`
+        says. With
+        `"import": true` (importer role, data_format.md §6.10) the pointer is set exactly as
+        sent (`run_id`, `ended`, `machine_id`, `updated_at`), `replaces` not checked. A path
+        test_id that is not a lower-case UUID is `400 bad_request`, before the project is
+        looked at.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/PointerRequest"}
+      responses:
+        "200":
+          description: "`saved`, or `changed` with the pointer as it is now (nothing written)."
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PointerResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/boards/{serial}/entries:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/SerialPath"
+      - $ref: "#/components/parameters/PartNumber"
+      - $ref: "#/components/parameters/BoardRevision"
+    post:
+      tags: [evidence]
+      operationId: saveBoardEntries
+      summary: E15 - add lot or field entries to a board (bench); nothing is ever replaced
+      description: |
+        Works as E7 (data_format.md §6.8). Each entry is added to the board's history; its slot
+        is its kind and, for a field, its name compared exactly. `saved` when its `replaces`
+        was the current entry for its kind and name, or there was none; `changed` when someone
+        saved that kind and name meanwhile (the entry is kept, not current; the current one is
+        answered so the app can offer to apply it); `already` for an entry_id held (a replay).
+        The board is created when it is new, so a lot can be entered before its first run. With
+        `"import": true` (importer role, data_format.md §6.10) each entry keeps its `received_at`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/BoardEntryPush"}
+      responses:
+        "200":
+          description: One result per entry, in order.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BoardEntryResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/artifacts:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      tags: [evidence]
+      operationId: listArtifacts
+      summary: E8 - artifacts without info and content (paged)
+      description: |
+        Newest first by `generated`, descending; an artifact with no `generated` comes after
+        every one that has it. Equal times (and no time) by kind, then serial, part number,
+        revision and name, each ascending by case folding ("none" first), then by `generation`,
+        newest first. With `generations=all` each generation is a row of its own, placed by its
+        own `generated`.
+        `work_order` and `test` compare by case folding, `verdict` exactly, as E2's; `test` finds
+        a report under the names it was made with (a rename does not touch reports). `from` and
+        `to` keep `generated` within `[from, to)`, as E2's keep `ended`. A parameter not listed
+        here is `400 unsupported_filter`.
+      parameters:
+        - name: kind
+          in: query
+          schema: {$ref: "#/components/schemas/ArtifactKind"}
+        - name: serial
+          in: query
+          description: One board; an empty value selects project-level exports.
+          schema: {type: string}
+        - name: part_number
+          in: query
+          description: That value; empty selects none (the "no part number" board, and project-level exports).
+          schema: {type: string}
+        - name: board_revision
+          in: query
+          description: That value; empty selects none.
+          schema: {type: string}
+        - name: work_order
+          in: query
+          description: Reports and drafts with this work order.
+          schema: {type: string}
+        - name: test
+          in: query
+          description: Reports covering this test.
+          schema: {type: string}
+        - name: verdict
+          in: query
+          description: One or more verdicts, comma-separated, as E2's.
+          schema: {type: string}
+        - name: from
+          in: query
+          description: "`generated` >= from; an artifact with no `generated` never matches."
+          schema: {$ref: "#/components/schemas/Time"}
+        - name: to
+          in: query
+          description: "`generated` < to; an artifact with no `generated` never matches."
+          schema: {$ref: "#/components/schemas/Time"}
+        - name: deleted
+          in: query
+          schema: {type: string, enum: [exclude, include, only], default: exclude}
+        - name: generations
+          in: query
+          description: "`latest` (each name's newest generation) or `all` (every generation of each name, each a row of its own)."
+          schema: {type: string, enum: [latest, all], default: latest}
+        - name: include
+          in: query
+          description: "`info` keeps each row's `info` (an earlier generation's scenario, verdict…). A draft's `content` is never listed."
+          schema: {type: string, enum: [info]}
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: The artifacts.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ArtifactList"}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      tags: [evidence]
+      operationId: pushArtifact
+      summary: E10 - push a report, an export or a draft; a report or export is never replaced
+      description: |
+        A report or export equal to its name's newest generation (the same `sha256` and the
+        same `info`) is `already`; any other push under the name is the next generation
+        (`saved`). A draft is replaced only when its `replaces` is the held draft's `sha256`,
+        else `changed` with the current one; a draft equal to the one held is `already`; with
+        none held it is `saved` whatever its `replaces`. `409 deleted` for a name a manager
+        deleted (a bench cannot undo a delete), except a push equal to that name's newest
+        generation: a replay, `already`. The first report or draft of a board creates the board.
+        An export has `serial: ""`; a report or draft has a serial (else `400 bad_request`).
+        With `"import": true` (importer role, data_format.md §6.10) a report or export keeps the
+        `generation` sent; one the name holds with another file or info is `409 changed`,
+        `details.current` the Artifact holding it.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: {$ref: "#/components/schemas/ArtifactMultipart"}
+            encoding:
+              json: {contentType: application/json}
+          application/json:
+            schema: {$ref: "#/components/schemas/ArtifactPush"}
+      responses:
+        "200":
+          description: "`saved`, `already`, or `changed` (a draft) with the artifact the server holds."
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ArtifactPushResult"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/artifacts/{kind}/{name}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - name: kind
+        in: path
+        required: true
+        schema: {$ref: "#/components/schemas/ArtifactKind"}
+      - name: name
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      tags: [evidence]
+      operationId: getArtifact
+      summary: E9 - one artifact with its file's part
+      parameters:
+        - name: serial
+          in: query
+          required: true
+          description: |
+            The board's serial; empty for a project-level export, whose `part_number` and
+            `board_revision` are then sent empty too. Required as `part_number` is.
+          schema: {type: string}
+        - $ref: "#/components/parameters/PartNumber"
+        - $ref: "#/components/parameters/BoardRevision"
+        - name: generation
+          in: query
+          description: Generation `n` of the name; absent, the newest. A generation the name does not hold, or any on a draft, is `404 not_found`.
+          schema: {type: integer, minimum: 1}
+        - $ref: "#/components/parameters/Have"
+      responses:
+        "200":
+          description: The Artifact.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Artifact"}
+            multipart/mixed:
+              schema: {$ref: "#/components/schemas/ArtifactMultipart"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/artifacts/delete:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [manager]
+      operationId: deleteArtifact
+      summary: E12 - soft delete an artifact (manager)
+      description: |
+        The delete covers every generation of the name; a restore brings them all back. Both
+        act on the name, never on one generation (a `generation` sent is ignored), and answer
+        the Artifact of the name's newest generation. A delete without a `reason`, or with a
+        blank one, is refused: `400 bad_request`; so is a `station` or `deleted_by_name` of
+        `""`. Deleting a deleted artifact, or restoring one that is not deleted, is a replay:
+        `200`, unchanged.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ArtifactDeleteRequest"}
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Artifact"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/artifacts/restore:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [manager]
+      operationId: restoreArtifact
+      summary: E12 - restore an artifact (manager)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ArtifactManagerRequest"}
+      responses:
+        "200":
+          description: Restored.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Artifact"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /projects/{project_id}/purge:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      tags: [manager]
+      operationId: purge
+      summary: E13 - remove for good what was deleted longer ago than the retention period, and the deleted items named (manager)
+      description: |
+        What was deleted strictly longer ago than the retention period (`/info`'s
+        `limits.retention_days`, by the server's own clock), and with `items` those deleted
+        items now as well (data_format.md §6.7). An item the server no longer holds is skipped
+        (a retried request); an item that is not deleted refuses the whole request (`400
+        bad_request`), nothing purged. The answer counts what went, one per run and one per
+        artifact name (all its generations), and lists it, what expired included (`purged`). A
+        purged run's `run_id` is kept: a later push of it is `409 deleted`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/PurgeRequest"}
+      responses:
+        "200":
+          description: How many went, and which.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PurgeResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /library:
+    get:
+      tags: [library]
+      operationId: listLibrary
+      summary: L1 - every kind (or one), every id with every version, in one answer
+      description: |
+        Ordered by kind, then id, both by code point (the kinds: `bundle`, `capability`,
+        `config`, `export`, `package`, `report`, `skill`, `tool`, `wizard`), then publication,
+        oldest first; the app orders versions itself. A `kind` that is none of the library's: `400 bad_request`.
+      parameters:
+        - name: kind
+          in: query
+          schema: {$ref: "#/components/schemas/LibraryKind"}
+      responses:
+        "200":
+          description: The library, without manifests.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: "#/components/schemas/LibraryItem"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /library/{kind}:
+    parameters:
+      - name: kind
+        in: path
+        required: true
+        schema: {$ref: "#/components/schemas/LibraryKind"}
+    post:
+      tags: [library]
+      operationId: publishLibraryItem
+      summary: L3 - publish one version; created once, never overwritten
+      description: |
+        `<id>@<version>` within its kind, compared exactly. The same with the same
+        `content_sha256` is a no-op (`already`); with another, `409 version_exists`
+        (details.content_sha256 is the stored one). One that differs from a held one only by
+        case: `409 exists` (a PC's `<id>/<version>/` folder could not hold both).
+        `contains_code` is the publisher's word (the server opens no archive), except that a
+        `capability`, `wizard`, `tool` or `package` always holds code (`false`: `400`); an item
+        holding code needs the `publisher` role (`403`). An archive over 1 MiB is uploaded
+        first (B1, owner `library`).
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: {$ref: "#/components/schemas/LibraryItemMultipart"}
+            encoding:
+              json: {contentType: application/json}
+          application/json:
+            schema: {$ref: "#/components/schemas/LibraryItem"}
+      responses:
+        "200":
+          description: Saved or already there.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/LibraryPushResult"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /library/{kind}/{id}/{version}:
+    parameters:
+      - name: kind
+        in: path
+        required: true
+        schema: {$ref: "#/components/schemas/LibraryKind"}
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - name: version
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      tags: [library]
+      operationId: getLibraryItem
+      summary: L2 - one version with its manifest and its archive
+      parameters:
+        - $ref: "#/components/parameters/Have"
+      responses:
+        "200":
+          description: The LibraryItem.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/LibraryItem"}
+            multipart/mixed:
+              schema: {$ref: "#/components/schemas/LibraryItemMultipart"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /library/{kind}/{id}/{version}/read:
+    parameters:
+      - name: kind
+        in: path
+        required: true
+        schema: {$ref: "#/components/schemas/LibraryKind"}
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - name: version
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      tags: [library]
+      operationId: readLibraryItem
+      summary: L2 with `have` in the body (a read; changes nothing)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/HaveRequest"}
+      responses:
+        "200":
+          description: As L2.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/LibraryItem"}
+            multipart/mixed:
+              schema: {$ref: "#/components/schemas/LibraryItemMultipart"}
+        default: {$ref: "#/components/responses/Error"}
+
+components:
+
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: |
+        `Authorization: Bearer <token>` on every call (web_api_spec.md §6). A login is
+        independent of the bench (per person, per bench or one per lab: the company's choice);
+        its roles (`bench`, `publisher`, `importer`, `manager`, `reader`, several allowed) say
+        what it may do (data_format.md §5.2). Every login reads. `importer` is the right to
+        move data in, held beside a login's other roles: with `"import": true` in the body it may
+        call E1, E6, E7, E10, E15, P10 and the deletes of E11 and E12, keeping the server-set
+        fields sent (§6.10); without it, a write needs the role the call names. The bench a run
+        came from is in the data, never deduced from the login.
+
+        No token at all: `401` with `WWW-Authenticate: Bearer`. A malformed, expired or revoked
+        token: `401` with `WWW-Authenticate: Bearer error="invalid_token"`. On `/info` both
+        401s carry the public `details` (web_api_spec.md §3.1, §6).
+
+  headers:
+    XBenchStore:
+      description: Always `v1`, on every answer including errors (web_api_spec.md §3.0).
+      required: true
+      schema: {type: string, const: v1}
+    XRequestId:
+      description: On every answer; echoed in the error envelope.
+      required: true
+      schema: {type: string}
+
+  parameters:
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      schema: {$ref: "#/components/schemas/ProjectId"}
+    Test:
+      name: test
+      in: path
+      required: true
+      description: The test's name (its folder's).
+      schema: {type: string}
+    TestIdPath:
+      name: test_id
+      in: path
+      required: true
+      description: |
+        A test's hidden id, as its `tests/<test>/test.json` holds it (data_format.md §4.3). One
+        that is not a lower-case UUID (a test's name, say) is `400 bad_request`, before the
+        project's existence is looked at.
+      schema: {$ref: "#/components/schemas/TestId"}
+    SerialPath:
+      name: serial
+      in: path
+      required: true
+      description: The board's serial; the query carries the rest of the board.
+      schema: {type: string}
+    PartNumber:
+      name: part_number
+      in: query
+      required: true
+      description: |
+        The board's part number; empty means none. Required wherever a call names one board
+        (E5, E6, E9, E15), so a call that forgot it is refused (`400 bad_request`) instead of
+        reaching the "no part number" board. A query parameter carries `/` or `#` safely; a
+        path segment does not (data_format.md §5.2, Addressing a board).
+      schema: {type: string}
+    BoardRevision:
+      name: board_revision
+      in: query
+      required: true
+      description: The board's revision; empty means none. Required as `part_number` is.
+      schema: {type: string}
+    RunIdPath:
+      name: run_id
+      in: path
+      required: true
+      schema: {$ref: "#/components/schemas/RunId"}
+    Have:
+      name: have
+      in: query
+      required: false
+      description: Comma-separated versions (`sha256:<hex>`) the client holds; their parts are left out. Too long for a URL, use the POST …/read twin.
+      schema: {type: string}
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: At most this many rows; absent, 100. The server may lower a larger one to its own ceiling, never below 500.
+      schema: {type: integer, minimum: 1}
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: The previous answer's opaque `cursor`.
+      schema: {type: string}
+
+  responses:
+    Error:
+      description: Any refusal, in the envelope of web_api_spec.md §5.
+      headers:
+        X-Bench-Store: {$ref: "#/components/headers/XBenchStore"}
+        X-Request-Id: {$ref: "#/components/headers/XRequestId"}
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+    BadRequest:
+      description: "`bad_request`, `unsupported_filter` (kind `invalid`)."
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+    Forbidden:
+      description: "`not_a_manager`, `forbidden` or another refusal, all of kind `denied`."
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+    Conflict:
+      description: |
+        `missing_files` (invalid; details.missing lists the versions, nothing written: put
+        them there and send the same request again), `run_conflict` (corrupt), `changed`
+        (invalid; details.current), `same_as_release` (invalid; details.version), `deleted`
+        (invalid: an artifact pushed to a name a manager deleted, a run a manager purged, an
+        entry for a deleted run), `version_exists` (invalid; details.content_sha256), `exists`
+        (invalid: P11, a project with that id or name is held; L3, a case-only twin).
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+    Gone:
+      description: "`gone`: the server cannot answer from the `since` token (too old, another server's, never given, unreadable; kind `not_found`); open the project in full."
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+
+  schemas:
+
+    # ---- Scalars -------------------------------------------------------------------------
+
+    Sha256Hex:
+      type: string
+      pattern: "^[0-9a-f]{64}$"
+      description: A sha256, 64 lower-case hex digits, bare.
+    Version:
+      type: string
+      pattern: "^sha256:[0-9a-f]{64}$"
+      description: A version, a part's name, an entry of `have`.
+    VersionList:
+      type: array
+      items: {$ref: "#/components/schemas/Version"}
+    Time:
+      type: string
+      pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+      description: UTC, ISO 8601, seconds, `Z`.
+      examples: ["2026-10-26T22:20:42Z"]
+    TimeMs:
+      type: string
+      pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+      description: UTC, ISO 8601, milliseconds, `Z` (phase times, server_time).
+      examples: ["2026-10-26T22:20:42.727Z"]
+    ProjectId:
+      type: string
+      format: uuid
+      description: Lower case.
+    TestId:
+      type: string
+      format: uuid
+      pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      description: |
+        A test's hidden id, lower case, made by the app when the test is created; Duplicate
+        makes a new one, a rename keeps it. Kept in `tests/<test>/test.json` as `test_id`;
+        unique within its project (data_format.md §2, §4.3).
+      examples: ["3f9c2a1e-7b4d-4e8a-9c61-2d5b8e0f4a17"]
+    RunId:
+      type: string
+      description: The run's start in UTC and 16 random hex digits (64 bits); unique within its project.
+      pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}Z_[0-9a-f]{16}$"
+      examples: ["2026-10-26T22-20-42Z_7f3a1c9e04b2d8a6"]
+    MachineId:
+      type: string
+      pattern: "^[0-9a-f]{8}$"
+    FormatVersion:
+      type: integer
+      minimum: 1
+      description: |
+        2 for Run, Artifact, Board and BoardResults, whose board is part number + revision +
+        serial (a Run or an Artifact recorded without it is 1); 1 for the others. A value the
+        object does not have is `400 bad_request`, details.format_version and details.known.
+    Verdict:
+      type: string
+      enum: [PASS, FAIL, ERROR, ABORTED, PARTIAL, SKIP]
+    TestFormat:
+      type: string
+      enum: [text, code]
+    ArtifactKind:
+      type: string
+      enum: [report, export, draft]
+    LibraryKind:
+      type: string
+      enum: [bundle, config, report, export, capability, wizard, skill, tool, package]
+
+    # ---- Files and storages --------------------------------------------------------------
+
+    File:
+      type: object
+      description: |
+        One project file (data_format.md §4.1): `text` for a text document under tests/,
+        functions/, config/ or scenarios/; otherwise `store_id`, the bytes being at
+        `<root>/<project_id>/<sha[0:2]>/<sha256>` in that storage, or the part named `version`
+        of the same body for an `api` storage.
+      required: [version, size]
+      properties:
+        version: {$ref: "#/components/schemas/Version"}
+        size: {type: integer, minimum: 0}
+        mtime:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          readOnly: true
+          description: When the server stored this version. Shown, never compared.
+        text: {type: string}
+        store_id: {type: integer}
+      oneOf:
+        - required: [text]
+        - required: [store_id]
+      examples:
+        - {version: "sha256:41ab000000000000000000000000000000000000000000000000000000000000", size: 2621440, mtime: "2026-11-03T10:00:00Z", store_id: 2}
+    FileMap:
+      type: object
+      description: Files by their `/` path in the project.
+      additionalProperties: {$ref: "#/components/schemas/File"}
+    Missing:
+      type: object
+      readOnly: true
+      description: |
+        Files of an `api` storage the server cannot give, by name (a project path, a release
+        document's name, `bundle/` for the bundle's archive, `archive` for a library item's):
+        `not_found` or `damaged`. Absent when none is missing. A missing file never hides what
+        refers to it (data_format.md rule 11).
+      additionalProperties: {type: string, enum: [not_found, damaged]}
+    BlobSaved:
+      type: object
+      description: B1's answer.
+      required: [status, version, size]
+      properties:
+        status: {type: string, enum: [saved, already]}
+        version: {$ref: "#/components/schemas/Version"}
+        size: {type: integer, minimum: 0}
+    Storage:
+      type: object
+      description: Where file bytes are (data_format.md §3.1, §4.15). params never hold a secret.
+      required: [format_version, store_id, backend, params, identity, active, declared, reachable]
+      properties:
+        format_version: {$ref: "#/components/schemas/FormatVersion"}
+        store_id: {type: integer}
+        backend: {type: string, enum: [api, filesystem, ftps, sftp]}
+        params:
+          type: object
+          description: "filesystem {root}; ftps {host, port, base_path, user, tls, passive, insecure, ca_bundle}; sftp {host, port, base_path, user, auth}; api {}."
+          additionalProperties: {type: string}
+        identity:
+          type: string
+          description: What a PC files the storage's password under.
+        active:
+          type: boolean
+          description: New files go here (unless a project names its own). Always false for a declared storage.
+        declared:
+          type: boolean
+          description: "true: a project's own storage, declared by the app (S2); the server never cleans it. false: one of the server's."
+        reachable:
+          type: boolean
+          description: "The server itself reads this storage and checks references into it. false: it assumes they hold. For a declared storage, what the server found when it was declared: a host that does not resolve (any name under .invalid), a folder it does not have, credentials refused: false, and S2 still saves it."
+    StorageDeclaration:
+      type: object
+      description: A project's own storage, as the app declares it (S2). Never a secret.
+      required: [backend, params, identity]
+      properties:
+        backend: {type: string, enum: [filesystem, ftps, sftp]}
+        params:
+          type: object
+          description: Every value a string; a key named for a secret is `400 bad_request`; any other key is kept.
+          additionalProperties: {type: string}
+        identity: {type: string, description: "Compared exactly, as the app composes it: `ftps://host:port/base_path`, `sftp://host:port/base_path`, or the folder's path as configured."}
+    StorageDeclared:
+      type: object
+      required: [status, storage]
+      properties:
+        status: {type: string, enum: [saved, already]}
+        storage: {$ref: "#/components/schemas/Storage"}
+    StorageList:
+      type: object
+      required: [instance_id, storages]
+      properties:
+        instance_id:
+          type: string
+          description: This server; the marker `procedo-attachments.json` of a writable storage names it.
+        storages:
+          type: array
+          items: {$ref: "#/components/schemas/Storage"}
+
+    # ---- Projects, tests, releases -------------------------------------------------------
+
+    Bundle:
+      type: object
+      description: The project's bundle/ folder, as one zip archive.
+      required: [bundle_id, bundle_version, archive]
+      properties:
+        bundle_id: {type: string}
+        bundle_version: {type: string}
+        bundle_sha256: {$ref: "#/components/schemas/Sha256Hex"}
+        archive: {$ref: "#/components/schemas/File"}
+    Project:
+      type: object
+      description: |
+        data_format.md §4.2. In the list (P1), without files, bundle and releases. Its files
+        never include `bundle/` (the Bundle), `releases/` (the Releases), the evidence or the
+        app's machine and bench state (§4.2).
+      required: [format_version, project_id]
+      properties:
+        format_version: {$ref: "#/components/schemas/FormatVersion"}
+        project_id: {$ref: "#/components/schemas/ProjectId"}
+        name: {type: string, description: "The project's folder name: one name every PC creates (data_format.md §4.2)."}
+        path: {type: string, readOnly: true, description: "Its `name` as first stored, in NFC (P1 only)."}
+        token: {type: string, readOnly: true}
+        updated:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          readOnly: true
+        created_at:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          readOnly: true
+        created_by: {type: string, readOnly: true}
+        files: {$ref: "#/components/schemas/FileMap"}
+        bundle: {$ref: "#/components/schemas/Bundle"}
+        releases:
+          allOf: [{$ref: "#/components/schemas/ReleasesByTestId"}]
+          readOnly: true
+          description: Every release of the project by its test's `test_id`, each Release with its documents, oldest first, a deleted test's included; `{}` none. Not in the list (P1).
+        missing: {$ref: "#/components/schemas/Missing"}
+        store_id:
+          type: integer
+          readOnly: true
+          description: Where this project's new files go; absent, the server's active storage.
+    ProjectCreate:
+      description: |
+        P11's body. Every test folder among `files` holds a `test.json` whose `test_id` is a
+        lower-case UUID, no two the same; else `400 bad_request`, nothing written
+        (data_format.md §4.3).
+      allOf:
+        - $ref: "#/components/schemas/Project"
+        - type: object
+          required: [name, files]
+          properties:
+            drafts:
+              type: array
+              description: As P9's.
+              items: {$ref: "#/components/schemas/DraftWrite"}
+    ProjectCreateMultipart:
+      $ref: "#/components/schemas/MultipartBody"
+      description: "`json` is a ProjectCreate; one part per api-stored file."
+    ProjectChanges:
+      type: object
+      description: |
+        P3, what changed since a token: each file changed as it is now, each path deleted, the
+        bundle when it changed, and each test_id whose releases changed (one made or imported)
+        with its whole list now. A draft alone is never a change here, and a rename changes no
+        release.
+      required: [token, files, deleted, releases]
+      properties:
+        token: {type: string}
+        files: {$ref: "#/components/schemas/FileMap"}
+        deleted:
+          type: array
+          items: {type: string}
+        bundle: {$ref: "#/components/schemas/Bundle"}
+        releases:
+          allOf: [{$ref: "#/components/schemas/ReleasesByTestId"}]
+          description: "`{}` when no test's releases changed."
+        missing: {$ref: "#/components/schemas/Missing"}
+    ReleasesByTestId:
+      type: object
+      description: Releases by their test's `test_id` (the folder `releases/<test_id>/` the app keeps them in), each with its documents, oldest first.
+      propertyNames: {$ref: "#/components/schemas/TestId"}
+      additionalProperties:
+        type: array
+        items: {$ref: "#/components/schemas/Release"}
+    ProjectOrChanges:
+      oneOf:
+        - $ref: "#/components/schemas/Project"
+        - $ref: "#/components/schemas/ProjectChanges"
+    ProjectAnswerMultipart:
+      $ref: "#/components/schemas/MultipartBody"
+      description: "`json` is a Project or a ProjectChanges."
+    Draft:
+      type: object
+      description: The test's current files' fingerprints, as the last client sent them. The server never computes them.
+      required: [test_id, fingerprint, content]
+      properties:
+        test_id:
+          allOf: [{$ref: "#/components/schemas/TestId"}]
+          description: Its test's id, as that test's test.json holds it; a draft naming another is not kept.
+        based_on: {type: integer, minimum: 1, description: "The release under the same test_id the draft started from; absent: never released."}
+        fingerprint: {$ref: "#/components/schemas/Sha256Hex"}
+        content: {$ref: "#/components/schemas/Sha256Hex"}
+        updated_at:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          readOnly: true
+        updated_by: {type: string}
+        machine_id: {$ref: "#/components/schemas/MachineId"}
+    DraftWrite:
+      allOf:
+        - $ref: "#/components/schemas/Draft"
+        - type: object
+          required: [test]
+          properties:
+            test: {type: string, description: "The test's name: the folder `tests/<test>/` the draft describes."}
+    Test:
+      type: object
+      description: |
+        data_format.md §4.3. Without files in the list (P4). Every test folder holds a
+        `test.json`, a JSON object whose `test_id` is a lower-case UUID unique within the
+        project; the server reads `test_id` and `format` there.
+      required: [format_version, test, test_id, format]
+      properties:
+        format_version: {$ref: "#/components/schemas/FormatVersion"}
+        test: {type: string, description: "The test's name: its folder's, `tests/<test>/`."}
+        test_id:
+          allOf: [{$ref: "#/components/schemas/TestId"}]
+          description: As its `tests/<test>/test.json` holds it.
+        format:
+          allOf: [{$ref: "#/components/schemas/TestFormat"}]
+          description: |
+            The app's rule: `tests/<test>/test.json`'s `active` (a byte-order mark before it
+            allowed); a test.json that names neither is `code`.
+        files:
+          allOf: [{$ref: "#/components/schemas/FileMap"}]
+          description: Every file under `tests/<test>/` and every file under `functions/`.
+        latest_release: {type: integer, minimum: 1, description: "The highest release under its test_id; absent: none."}
+        draft:
+          allOf: [{$ref: "#/components/schemas/Draft"}]
+          description: As the last client that changed its files sent it; absent, not known.
+        missing: {$ref: "#/components/schemas/Missing"}
+        updated:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          readOnly: true
+    TestList:
+      type: object
+      required: [token, tests]
+      properties:
+        token: {type: string}
+        tests:
+          type: array
+          items: {$ref: "#/components/schemas/Test"}
+    TestsByName:
+      type: object
+      required: [token, tests]
+      properties:
+        token: {type: string}
+        tests:
+          type: object
+          additionalProperties: {$ref: "#/components/schemas/Test"}
+        missing:
+          type: array
+          items: {type: string}
+    TestsByNameMultipart:
+      $ref: "#/components/schemas/MultipartBody"
+      description: "`json` is a TestsByName."
+    TestMultipart:
+      $ref: "#/components/schemas/MultipartBody"
+      description: "`json` is a Test."
+    Release:
+      type: object
+      description: |
+        data_format.md §4.4. Made by Release, numbered by the server, never changed. Filed under
+        its test's `test_id`: a rename keeps it, a deleted test's stays, a new test starts at 1.
+      required: [format_version, test_id, test, format, fingerprint, content]
+      properties:
+        format_version: {$ref: "#/components/schemas/FormatVersion"}
+        test_id:
+          allOf: [{$ref: "#/components/schemas/TestId"}]
+          description: The id of the test released; its releases are one list, numbered from 1.
+        test:
+          type: string
+          description: The test's name when it was released; a record, never changed.
+        version: {type: integer, minimum: 1, readOnly: true, description: "1, 2, … within its test_id."}
+        format: {$ref: "#/components/schemas/TestFormat"}
+        fingerprint: {$ref: "#/components/schemas/Sha256Hex"}
+        content: {$ref: "#/components/schemas/Sha256Hex"}
+        documents:
+          type: object
+          description: The documents by their names in the test, exactly those P10 named.
+          additionalProperties: {$ref: "#/components/schemas/File"}
+        note: {type: string}
+        released_at:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          readOnly: true
+        released_by: {type: string}
+        pc: {type: string, description: "The PC's name, as the release file records it."}
+        machine_id: {$ref: "#/components/schemas/MachineId"}
+        numbered_before_releases: {type: boolean}
+        missing: {$ref: "#/components/schemas/Missing"}
+    ReleaseMultipart:
+      $ref: "#/components/schemas/MultipartBody"
+      description: "`json` is a Release."
+    ReleaseRequestMultipart:
+      $ref: "#/components/schemas/MultipartBody"
+      description: "`json` is a ReleaseRequest (an import); one part per api-stored document of at most 1 MiB."
+    ReleaseRequest:
+      type: object
+      description: |
+        P10. The version of each file released, and their fingerprint and content; the path
+        names the test_id. An import may send `documents` in place of `files`.
+      required: [format, fingerprint, content]
+      properties:
+        note: {type: string}
+        format: {$ref: "#/components/schemas/TestFormat"}
+        fingerprint: {$ref: "#/components/schemas/Sha256Hex"}
+        content: {$ref: "#/components/schemas/Sha256Hex"}
+        released_by: {type: string}
+        pc: {type: string}
+        machine_id: {$ref: "#/components/schemas/MachineId"}
+        files:
+          type: object
+          description: |
+            The project path of each file released (under `tests/<test>/`, or under
+            `functions/`) and its version: exactly the documents the release keeps.
+          additionalProperties: {$ref: "#/components/schemas/Version"}
+        documents:
+          type: object
+          description: |
+            Only with import: the release's own documents by their names, text or references
+            (their bytes parts of the same multipart request, sent alone, or held already).
+          additionalProperties: {$ref: "#/components/schemas/File"}
+        test:
+          type: string
+          description: Only with import, importer role, the name it was released under.
+        import:
+          type: boolean
+          description: true for a release moved in from another storage (data_format.md §6.10).
+        version:
+          type: integer
+          minimum: 1
+          description: Only with import, importer role (data_format.md §6.10).
+        released_at:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          description: Only with import, importer role (data_format.md §6.10).
+    Change:
+      description: One change of P9 (web_api_projects.md).
+      oneOf:
+        - title: write text
+          type: object
+          required: [path, replaces, text]
+          properties:
+            path: {type: string}
+            replaces: {oneOf: [{$ref: "#/components/schemas/Version"}, {type: "null"}]}
+            text: {type: string}
+        - title: write a stored file
+          type: object
+          required: [path, replaces, version, size, store_id]
+          properties:
+            path: {type: string}
+            replaces: {oneOf: [{$ref: "#/components/schemas/Version"}, {type: "null"}]}
+            version: {$ref: "#/components/schemas/Version"}
+            size: {type: integer, minimum: 0}
+            store_id: {type: integer}
+        - title: delete
+          type: object
+          required: [path, replaces, delete]
+          properties:
+            path: {type: string}
+            replaces: {$ref: "#/components/schemas/Version"}
+            delete: {const: true}
+        - title: move a folder
+          type: object
+          required: [path, replaces_folder, move_to]
+          properties:
+            path: {type: string}
+            replaces_folder:
+              type: object
+              additionalProperties: {$ref: "#/components/schemas/Version"}
+            move_to: {type: string}
+        - title: a new bundle
+          type: object
+          required: [bundle, replaces, version, size, store_id]
+          properties:
+            bundle:
+              type: object
+              required: [bundle_id, bundle_version]
+              properties:
+                bundle_id: {type: string}
+                bundle_version: {type: string}
+                bundle_sha256: {$ref: "#/components/schemas/Sha256Hex"}
+            replaces: {oneOf: [{$ref: "#/components/schemas/Version"}, {type: "null"}]}
+            version: {$ref: "#/components/schemas/Version"}
+            size: {type: integer, minimum: 0}
+            store_id: {type: integer}
+    ChangesRequest:
+      type: object
+      required: [changes]
+      properties:
+        changes:
+          type: array
+          items: {$ref: "#/components/schemas/Change"}
+        drafts:
+          type: array
+          items: {$ref: "#/components/schemas/DraftWrite"}
+    ChangesMultipart:
+      $ref: "#/components/schemas/MultipartBody"
+      description: "`json` is a ChangesRequest; one part per api-stored file it writes."
+    ChangesResult:
+      type: object
+      required: [token, results]
+      properties:
+        token: {type: string}
+        results:
+          type: array
+          items:
+            type: object
+            required: [path, status]
+            properties:
+              path: {type: string, description: "`bundle/` for the bundle."}
+              status: {type: string, enum: [saved, changed, refused]}
+              version: {$ref: "#/components/schemas/Version"}
+              current:
+                allOf: [{$ref: "#/components/schemas/File"}]
+                description: For `changed` on a file or the bundle, what the server holds now (absent when it holds none). Never on a move.
+              kind: {type: string, description: "For `refused`: web_api_spec.md §5's kind."}
+              message: {type: string, description: "For `refused`: one sentence for the user."}
+
+    # ---- Runs ----------------------------------------------------------------------------
+
+    RunSummary:
+      type: object
+      description: |
+        data_format.md §4.5, as lists answer it: the Run without phases, files, missing,
+        bench_values and extra. A format-1 run (one recorded without the board identity)
+        belongs to the board with no part number and no revision, whatever `part_number` and
+        `board_revision` it recorded: those stay as recorded, shown as information.
+      required: [format_version, run_id, serial, test, test_id, complete, machine_id, draft]
+      properties:
+        format_version:
+          allOf: [{$ref: "#/components/schemas/FormatVersion"}]
+          description: 2; 1 for a run recorded without the board identity.
+        project_id:
+          allOf: [{$ref: "#/components/schemas/ProjectId"}]
+          description: Optional in a push (it must equal the path's); always in an answer.
+        project_name:
+          type: string
+          description: Used only when this push is the first the server sees of the project.
+        run_id: {$ref: "#/components/schemas/RunId"}
+        serial:
+          type: string
+          description: "The board's serial number. A run made with *No serial* picked in Bench carries `_unsorted`: a board like any other for a server (data_format.md §2)."
+        part_number: {type: string, description: "The board's part number; absent: none."}
+        board_revision:
+          type: string
+          description: "The board's revision; absent: none. With serial and part_number, the board the run belongs to."
+        test: {type: string, description: "The test's name when it ran: a record, kept as sent (NFC), never changed."}
+        test_id:
+          allOf: [{$ref: "#/components/schemas/TestId"}]
+          description: |
+            The test that ran (its test.json). The run is filed under it on every storage, never
+            under the name: a rename moves no run, and a new test with a deleted test's name has
+            none of its runs.
+        firmware_version:
+          type: string
+          description: The firmware on the board when it ran; the run's, not the board's (a board can be flashed again).
+        lot:
+          type: string
+          description: Format 1 only, the lot such a run recorded, kept as it was. A format-2 run does not send it (the lot is the board's); one that does is `400 bad_request`.
+        started: {$ref: "#/components/schemas/Time"}
+        ended:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          description: Required when complete.
+        verdict: {$ref: "#/components/schemas/Verdict"}
+        complete: {type: boolean}
+        operator: {type: string}
+        machine_id: {$ref: "#/components/schemas/MachineId"}
+        station_id: {type: string}
+        test_version: {type: integer, minimum: 1, description: "The release that ran (under test_id), or the one a draft came from."}
+        draft: {type: boolean}
+        definition_sha256: {$ref: "#/components/schemas/Sha256Hex"}
+        bundle_id: {type: string}
+        bundle_version: {type: string}
+        app_version: {type: string}
+        pushed_at:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          description: Set by the server. In a request, only with import, importer role (data_format.md §6.10).
+        current: {type: boolean, readOnly: true}
+        annotation:
+          allOf: [{$ref: "#/components/schemas/Annotation"}]
+          readOnly: true
+          description: Absent when the run has no entry.
+        deleted_at:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          readOnly: true
+        deleted_by:
+          type: string
+          readOnly: true
+          description: The manager's login, as the server authenticated it.
+        deleted_by_name:
+          type: string
+          readOnly: true
+          description: The person's name as typed at the bench (the delete's `deleted_by_name`); absent when none was sent.
+        deleted_bench:
+          type: string
+          readOnly: true
+          description: The bench the delete came from, its machine_id.
+        deleted_station:
+          type: string
+          readOnly: true
+          description: That bench's station name then (the delete's `station`); absent when none was sent.
+        deleted_reason:
+          type: string
+          readOnly: true
+          description: |
+            Why, as the manager wrote it. The folder storages' trash keeps every deleted_*
+            field but the login: its deleted_by is the typed name, its station the station.
+        deleted_was_current:
+          type: boolean
+          readOnly: true
+          description: It was its test's current run when deleted.
+      if:
+        properties: {complete: {const: true}}
+      then:
+        required: [ended]
+    Run:
+      description: One run, complete (data_format.md §4.5). Written once.
+      allOf:
+        - $ref: "#/components/schemas/RunSummary"
+        - type: object
+          required: [phases, files]
+          properties:
+            extra:
+              type: object
+              description: |
+                The project's own fields entered at each run, {name: value}, as its
+                configuration declares them; each value a string. A search by it may be slower.
+              additionalProperties: {type: string}
+            bench_values:
+              type: object
+              description: "{constant: value}, the bench values the run ran with."
+            phases:
+              type: array
+              items: {$ref: "#/components/schemas/Phase"}
+            files:
+              type: array
+              items: {$ref: "#/components/schemas/RunFile"}
+            missing:
+              type: object
+              readOnly: true
+              description: Files of an api storage the server cannot give, by name; absent when none is missing.
+              additionalProperties: {type: string, enum: [not_found, damaged]}
+    RunPush:
+      description: E1's body, a Run plus the import flag.
+      allOf:
+        - $ref: "#/components/schemas/Run"
+        - type: object
+          properties:
+            import:
+              type: boolean
+              description: true for a run moved in from another storage, sent with `pushed_at` (data_format.md §6.10).
+    RunMultipart:
+      $ref: "#/components/schemas/MultipartBody"
+      description: "`json` is a Run (a RunPush, in a request); one part per api-stored file (less `have`, in an answer)."
+    Phase:
+      type: object
+      required: [ord, name, attempt, measurements]
+      properties:
+        ord: {type: integer, minimum: 1}
+        name: {type: string}
+        attempt: {type: integer, minimum: 1, description: "1 for the first run of this phase in the record, 2 for its first retry, and so on."}
+        outcome: {type: string}
+        started: {$ref: "#/components/schemas/TimeMs"}
+        ended: {$ref: "#/components/schemas/TimeMs"}
+        measurements:
+          type: array
+          items: {$ref: "#/components/schemas/Measurement"}
+    Measurement:
+      type: object
+      description: data_format.md §4.7. A reading has no criterion; a check judges readings.
+      required: [name, ord]
+      properties:
+        name: {type: string}
+        ord: {type: integer, minimum: 1, description: Place among the run's measurements.}
+        value_num: {type: number}
+        value_text: {type: string}
+        units: {type: string}
+        outcome: {type: string, enum: [PASS, FAIL, UNSET, PARTIALLY_SET, SKIPPED]}
+        validators:
+          type: array
+          items: {type: string}
+        criterion_kind:
+          type: string
+          enum: [range, max, min, equals, tolerance, one_of, contains, matches, operator_decision, monotonic, aggregate, and, or, expr]
+        limit_low: {type: number}
+        limit_high: {type: number}
+        criterion: {$ref: "#/components/schemas/Criterion"}
+      examples:
+        - name: "{9} in [3.2, 3.4] V"
+          ord: 9
+          value_num: 3.6
+          units: V
+          outcome: FAIL
+          validators: ["3.2 <= x <= 3.4"]
+          criterion_kind: range
+          limit_low: 3.2
+          limit_high: 3.4
+          criterion: {kind: range, ref: 9, lo_value: 3.2, hi_value: 3.4, unit: V}
+    Criterion:
+      type: object
+      description: |
+        The whole criterion as the engine's grammar holds it (`procedure_v2.schema.json`,
+        `Criterion`), discriminated by its own `kind` (lt, lte, gt, gte, eq, range,
+        tolerance_abs, tolerance_pct, eq_text, regex_match, contains, contains_any,
+        contains_all, one_of, operator_decision, diff, range_abs_each, lt_each, lte_each,
+        gt_each, gte_each, monotonic, aggregate, eq_digital, expr, logic). Stored and returned
+        verbatim.
+      required: [kind]
+      properties:
+        kind: {type: string}
+      examples:
+        - {kind: lt, ref: 2, limit_value: 5.0, limit_unit: V}
+        - {kind: tolerance_abs, ref: 1, nominal_value: 28.0, unit: V, tol_value: 0.2, tol_unit: V}
+        - {kind: one_of, ref: 5, texts: [OK, DONE]}
+        - {kind: logic, op: or, parts: [{kind: lt, ref: 1, limit_value: 1, limit_unit: null}, {kind: gt, ref: 1, limit_value: 2, limit_unit: null}]}
+    RunFile:
+      type: object
+      description: One file of a run, a reference to its storage (data_format.md §4.8).
+      required: [name, role, size, sha256, store_id]
+      properties:
+        name: {type: string, description: "Its `/` path in the run."}
+        role: {type: string, enum: [record, log, functions, definition, attachment]}
+        size: {type: integer, minimum: 0}
+        sha256: {$ref: "#/components/schemas/Sha256Hex"}
+        mimetype:
+          type: string
+          description: The file's type. Absent, not known; kept absent (no default filled in), and read as application/octet-stream.
+        store_id: {type: integer}
+    RunPushResult:
+      type: object
+      required: [status, run_id, serial, test_id, current]
+      properties:
+        status: {type: string, enum: [saved, already]}
+        run_id: {$ref: "#/components/schemas/RunId"}
+        serial: {type: string, description: "The board the run was filed under, in its stored spelling."}
+        part_number: {type: string, description: "The board's, in its stored spelling; absent: none (always, for a format-1 run)."}
+        board_revision: {type: string, description: "The board's, in its stored spelling; absent: none (always, for a format-1 run)."}
+        test_id:
+          allOf: [{$ref: "#/components/schemas/TestId"}]
+          description: The test the run was filed under.
+        current: {type: boolean, description: "It is now the current run of its test_id on the board."}
+        pushed_at: {$ref: "#/components/schemas/Time"}
+    RunList:
+      type: object
+      required: [runs, cursor]
+      properties:
+        runs:
+          type: array
+          items: {$ref: "#/components/schemas/RunSummary"}
+        cursor:
+          oneOf: [{type: string}, {type: "null"}]
+          description: Opaque; null when the answer is complete.
+
+    # ---- Annotations, artifacts, boards, pointers ----------------------------------------
+
+    Annotation:
+      type: object
+      description: data_format.md §4.9. Entries are added, never replaced; data is computed from them.
+      required: [format_version, run_id, entries]
+      properties:
+        format_version: {$ref: "#/components/schemas/FormatVersion"}
+        run_id: {$ref: "#/components/schemas/RunId"}
+        entries:
+          type: array
+          description: In the order received.
+          items: {$ref: "#/components/schemas/AnnotationEntry"}
+        data:
+          type: object
+          readOnly: true
+          description: |
+            The current entry per key, as the app's annotation_entries.current_data computes it
+            (less its entries): {"version": "2.0", "comments": {"test": V, "criteria": {key: V}},
+            "verdict_overrides": {...}}, each V {"text"|"value", "by", "at" (its saved_at),
+            "entry_id"}. A cleared key is absent, and `test` with no value; with nothing set,
+            {"version": "2.0", "comments": {"criteria": {}}, "verdict_overrides": {"criteria": {}}}.
+    AnnotationEntry:
+      type: object
+      required: [entry_id, kind, key, replaces, by, machine_id, saved_at]
+      properties:
+        entry_id: {type: string, description: "A UUID made by the app when the person saves; unique within its run."}
+        kind: {type: string, enum: [comment, override]}
+        key: {type: string, description: "`test` or a check's stable key."}
+        text: {type: [string, "null"]}
+        value:
+          description: An override's verdict; null clears it. Another value is `400 bad_request`.
+          oneOf: [{$ref: "#/components/schemas/Verdict"}, {type: "null"}]
+        replaces: {type: [string, "null"], description: The entry_id the person saw for this kind and key.}
+        by: {type: string}
+        machine_id: {$ref: "#/components/schemas/MachineId"}
+        saved_at:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          description: The bench's clock; shown, never compared.
+        received_at:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          description: Set by the server. In a request, only with import, importer role (data_format.md §6.10); absent for an imported entry whose source recorded none.
+        current:
+          type: boolean
+          readOnly: true
+          description: |
+            true for the entry a reader sees for its key now; false for every other (replaced
+            since, or arrived after another without naming it). Computed from the order received.
+    AnnotationPush:
+      type: object
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          items: {$ref: "#/components/schemas/AnnotationEntry"}
+        import:
+          type: boolean
+          description: true for entries moved in from another storage, sent with their `received_at` (data_format.md §6.10).
+    AnnotationResult:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required: [entry_id, status]
+            properties:
+              entry_id: {type: string}
+              status: {type: string, enum: [saved, changed, already]}
+              current: {$ref: "#/components/schemas/AnnotationEntry"}
+    Artifact:
+      type: object
+      description: |
+        data_format.md §4.10. Identified by kind, the board (serial, part_number,
+        board_revision) and name. A format-1 artifact belongs to the board with no part number
+        and no revision, as a format-1 run does. In the list, without info and content. It has
+        no mimetype: a part's Content-Type follows its name's extension (data_format.md §3.3).
+      required: [format_version, kind, serial, name, sha256, machine_id, updated_at]
+      properties:
+        format_version:
+          allOf: [{$ref: "#/components/schemas/FormatVersion"}]
+          description: 2; 1 for an artifact recorded without the board identity.
+        kind: {$ref: "#/components/schemas/ArtifactKind"}
+        serial: {type: string, description: "The board's serial; '' for an export, always project-level. An export with a serial, or a report or draft without one, is `400 bad_request`."}
+        part_number: {type: string, description: "The board's part number; absent: none, and always absent for a project-level export."}
+        board_revision: {type: string, description: "The board's revision; absent: none, and always absent for a project-level export."}
+        name: {type: string}
+        work_order:
+          type: string
+          description: |
+            A report's or a draft's work order, entered in the report preview dialog. One
+            report has one work order, whatever its runs recorded.
+        fields:
+          type: object
+          description: |
+            A report's or a draft's own fields, {name: value}, those the project's
+            configuration enters "in the report"; each value a string. A search by it may be slower.
+          additionalProperties: {type: string}
+        info:
+          type: object
+          description: |
+            Its record (a report's JSON, an export's metadata), verbatim: a JSON value, stored
+            and answered with its keys in the order sent, at every level. A reader rebuilds the
+            record's file with the app's own writer from it, so the server keeps the key order
+            (a store that reorders keys, for example PostgreSQL's jsonb, does not; data_format.md
+            §4.10).
+        content:
+          type: object
+          description: A draft's content; a draft has no file. Kept as `info` is, its key order included.
+        sha256:
+          allOf: [{$ref: "#/components/schemas/Sha256Hex"}]
+          description: |
+            A report's or an export's file. A draft's version: the sha256 of its `content` as
+            canonical JSON (keys sorted by code point, no blank between tokens, non-ASCII as
+            itself, UTF-8: json.dumps(content, sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False)), computed by the app, stored and answered by the server, which
+            never computes it.
+        size: {type: integer, minimum: 0, description: Not for a draft.}
+        store_id: {type: integer, description: Not for a draft.}
+        missing:
+          type: object
+          readOnly: true
+          description: As a Run's, for its one file in an api storage the server cannot give; absent otherwise.
+          additionalProperties: {type: string, enum: [not_found, damaged]}
+        generated:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          description: When it was made; a report's record (`info`) writes the same time, in UTC.
+        verdict: {type: string}
+        operator: {type: string}
+        tests:
+          type: array
+          items: {type: string}
+        machine_id: {$ref: "#/components/schemas/MachineId"}
+        updated_at:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          description: When it was saved on the bench; shown, never compared.
+        generation:
+          type: integer
+          minimum: 1
+          description: |
+            A report or export sent again under its name with other bytes is kept as the next
+            generation. Set by the server. In a request, only with import, importer role (data_format.md §6.10).
+        replaces:
+          type: [string, "null"]
+          description: A draft only, the `sha256` of the draft this bench last read (null, none); else `changed`.
+        deleted_at:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          readOnly: true
+        deleted_by: {type: string, readOnly: true}
+        deleted_by_name: {type: string, readOnly: true}
+        deleted_bench: {type: string, readOnly: true}
+        deleted_station: {type: string, readOnly: true}
+        deleted_reason: {type: string, readOnly: true, description: "As for a run (RunSummary). An artifact has no deleted_was_current: no pointer names it."}
+    ArtifactPush:
+      description: E10's body, an Artifact plus the import flag.
+      allOf:
+        - $ref: "#/components/schemas/Artifact"
+        - type: object
+          properties:
+            import:
+              type: boolean
+              description: true for a report or export moved in from another storage, sent with its `generation` (data_format.md §6.10).
+    ArtifactMultipart:
+      $ref: "#/components/schemas/MultipartBody"
+      description: "`json` is an Artifact (an ArtifactPush, in a request); its file's part for an api storage."
+    ArtifactList:
+      type: object
+      required: [artifacts, cursor]
+      properties:
+        artifacts:
+          type: array
+          items: {$ref: "#/components/schemas/Artifact"}
+        cursor:
+          oneOf: [{type: string}, {type: "null"}]
+    ArtifactPushResult:
+      type: object
+      required: [status, artifact]
+      properties:
+        status: {type: string, enum: [saved, already, changed]}
+        artifact: {$ref: "#/components/schemas/Artifact"}
+    Board:
+      type: object
+      description: |
+        data_format.md §4.11. A board of a project: its part number, its revision and its
+        serial together (two boards may share a serial); a new revision is a new board. The
+        board with neither a part number nor a revision is the "no part number" group: every
+        format-1 result, and the runs of a project that made both optional. lot
+        and details come from the current entries, never replaced, as an annotation's data
+        does. A board comes into being with its first run (E1), entry (E15) or report or draft
+        (E10), and is never removed.
+      required: [format_version, serial]
+      properties:
+        format_version:
+          allOf: [{$ref: "#/components/schemas/FormatVersion"}]
+          description: "2."
+        serial: {type: string, description: As first stored.}
+        part_number: {type: string, description: "As first stored; absent: none."}
+        board_revision: {type: string, description: "As first stored; absent: none."}
+        lot:
+          type: string
+          readOnly: true
+          description: The lot it was built in, the current `lot` entry; absent when none was entered.
+        details:
+          type: object
+          readOnly: true
+          description: "The project's fields kept with the board (once per board), {name: value}, from the current entries; each value a string. A search by it may be slower."
+          additionalProperties: {type: string}
+        entries:
+          type: array
+          readOnly: true
+          description: Every entry, oldest first, the history of lot and details. Only in E5's answer, not in lists.
+          items: {$ref: "#/components/schemas/BoardEntry"}
+        created_at:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          readOnly: true
+        last_ended:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          readOnly: true
+          description: Its latest run's `ended`.
+    BoardEntry:
+      type: object
+      description: data_format.md §4.11. One value of a board's lot or of one of the project's fields; added, never replaced.
+      required: [entry_id, kind, value, replaces, by, machine_id, saved_at]
+      properties:
+        entry_id: {type: string, description: "A UUID made by the app when the person saves, so a replay from the outbox is the same entry."}
+        kind: {type: string, enum: [lot, field]}
+        name:
+          type: string
+          description: |
+            For `field`: the field's name, as the project's configuration spells it, compared
+            exactly. A field renamed later keeps its older entries under the old name. A `lot`
+            entry has none.
+        value: {type: [string, "null"], description: null clears it.}
+        replaces: {type: [string, "null"], description: The entry_id the person saw for this kind and name; null for none.}
+        by: {type: string, description: "Who, as typed or signed in."}
+        machine_id: {$ref: "#/components/schemas/MachineId"}
+        bench: {type: string, description: "The bench's station name, shown in the history."}
+        saved_at:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          description: The bench's clock; shown, never compared.
+        received_at:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          description: Set by the server. In a request, only with import, importer role (data_format.md §6.10); absent for an imported entry whose source recorded none.
+        current:
+          type: boolean
+          readOnly: true
+          description: As an AnnotationEntry's, for its kind and name.
+      if:
+        properties: {kind: {const: field}}
+      then:
+        required: [name]
+    BoardEntryPush:
+      type: object
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          items: {$ref: "#/components/schemas/BoardEntry"}
+        import:
+          type: boolean
+          description: true for entries moved in from another storage, sent with their `received_at` (data_format.md §6.10).
+    BoardEntryResult:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required: [entry_id, status]
+            properties:
+              entry_id: {type: string}
+              status: {type: string, enum: [saved, changed, already]}
+              current: {$ref: "#/components/schemas/BoardEntry"}
+    TestPointer:
+      type: object
+      description: |
+        The current run of a test on a board: one mark per board and test_id, never per name, so
+        an old and a new test of one name each keep theirs. run_id null, demoted, ended kept.
+        The pointer rule (data_format.md §4.13): a complete run pushed becomes current when its
+        test_id has no pointer on the board or its ended is strictly later than the pointer's;
+        Set as current gives the pointer the chosen run's ended; deleting the current run hands
+        it to the newest remaining complete run of the same test_id, else leaves no pointer.
+      required: [test_id]
+      properties:
+        test_id: {$ref: "#/components/schemas/TestId"}
+        run_id:
+          oneOf: [{$ref: "#/components/schemas/RunId"}, {type: "null"}]
+        ended: {$ref: "#/components/schemas/Time"}
+        machine_id: {$ref: "#/components/schemas/MachineId"}
+        updated_at:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          readOnly: true
+    BoardResults:
+      type: object
+      description: |
+        data_format.md §4.12. A board's results: what Bench's test list and the report need,
+        in one answer (E5). A board the server does not know is answered with no tests and
+        no entries.
+      required: [format_version, board, tests]
+      properties:
+        format_version:
+          allOf: [{$ref: "#/components/schemas/FormatVersion"}]
+          description: "2."
+        board:
+          allOf: [{$ref: "#/components/schemas/Board"}]
+          description: The board, with its entries.
+        tests:
+          type: array
+          description: Per test_id that has a run on the board not deleted, ordered by test_id (byte order of the lower-case UUID).
+          items:
+            type: object
+            required: [test_id, pointer, runs]
+            properties:
+              test_id: {$ref: "#/components/schemas/TestId"}
+              pointer:
+                oneOf: [{$ref: "#/components/schemas/TestPointer"}, {type: "null"}]
+              runs:
+                type: array
+                description: The runs not deleted, newest first by run_id, each with the `test` name it recorded.
+                items: {$ref: "#/components/schemas/RunSummary"}
+        current_runs:
+          type: array
+          description: With include=current.
+          items: {$ref: "#/components/schemas/Run"}
+    BoardResultsMultipart:
+      $ref: "#/components/schemas/MultipartBody"
+      description: "`json` is a BoardResults; the parts of its current runs' api-stored files."
+    PointerRequest:
+      type: object
+      required: [run_id, replaces, machine_id]
+      properties:
+        run_id:
+          oneOf: [{$ref: "#/components/schemas/RunId"}, {type: "null"}]
+          description: null clears (demotes), keeping ended. The run must be complete and not deleted.
+        replaces:
+          description: The pointer as last read; null when there was none.
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [run_id, ended]
+              properties:
+                run_id:
+                  oneOf: [{$ref: "#/components/schemas/RunId"}, {type: "null"}]
+                ended: {$ref: "#/components/schemas/Time"}
+        machine_id: {$ref: "#/components/schemas/MachineId"}
+        import:
+          type: boolean
+          description: true to set the pointer exactly as sent, replaces not checked (importer role, data_format.md §6.10).
+        ended:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          description: Only with import, the pointer's ended as the source had it (a demoted pointer's included).
+        updated_at:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          description: Only with import, when the pointer moved at the source.
+    PointerResult:
+      type: object
+      required: [status, pointer]
+      properties:
+        status: {type: string, enum: [saved, changed]}
+        pointer: {$ref: "#/components/schemas/TestPointer"}
+    Bench:
+      type: object
+      required: [format_version, machine_id]
+      properties:
+        format_version: {$ref: "#/components/schemas/FormatVersion"}
+        machine_id: {$ref: "#/components/schemas/MachineId"}
+        label:
+          type: string
+          minLength: 1
+          readOnly: true
+          description: The station name the latest request naming one gave (a run's station_id, an entry's bench); one naming none leaves it. Absent until one does.
+        first_seen:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          readOnly: true
+        last_seen:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          readOnly: true
+
+    # ---- Manager requests ----------------------------------------------------------------
+
+    ManagerRequest:
+      type: object
+      required: [machine_id]
+      properties:
+        machine_id:
+          allOf: [{$ref: "#/components/schemas/MachineId"}]
+          description: The bench the manager acts from (deleted_bench).
+    ArtifactManagerRequest:
+      allOf:
+        - $ref: "#/components/schemas/ManagerRequest"
+        - type: object
+          required: [kind, serial, name]
+          properties:
+            kind: {$ref: "#/components/schemas/ArtifactKind"}
+            serial: {type: string}
+            part_number: {type: string, description: "The artifact's board; absent: none."}
+            board_revision: {type: string, description: "The artifact's board; absent: none."}
+            name: {type: string}
+    PurgeRequest:
+      description: E13's body.
+      allOf:
+        - $ref: "#/components/schemas/ManagerRequest"
+        - type: object
+          properties:
+            items:
+              type: array
+              description: Deleted items to purge now, runs by `run_id`, artifacts by kind + board + name.
+              items:
+                oneOf:
+                  - type: object
+                    required: [run_id]
+                    properties:
+                      run_id: {$ref: "#/components/schemas/RunId"}
+                    additionalProperties: false
+                  - type: object
+                    required: [kind, serial, name]
+                    properties:
+                      kind: {$ref: "#/components/schemas/ArtifactKind"}
+                      serial: {type: string}
+                      part_number: {type: string, description: "The artifact's board; absent: none."}
+                      board_revision: {type: string, description: "The artifact's board; absent: none."}
+                      name: {type: string}
+                    additionalProperties: false
+    DeleteFields:
+      type: object
+      description: What a delete (E11, E12) adds to the manager's body; restore and purge take none of it.
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          pattern: "\\S"
+          description: Why, as the manager wrote it; kept as deleted_reason. Absent or blank, `400 bad_request`.
+        station:
+          type: string
+          minLength: 1
+          description: |
+            The bench's station name (its station_id), as the folder storages' trash records
+            it; kept and answered as deleted_station. Absent: not known. `""`: `400 bad_request`.
+        deleted_by_name:
+          type: string
+          minLength: 1
+          description: |
+            The person's name as typed at the bench (the operator chosen, else the PC's user
+            name), as the folder storages' trash records it; kept and answered as
+            deleted_by_name. Nothing proves it: deleted_by is the login. Absent: not known.
+            `""`: `400 bad_request`.
+        import:
+          type: boolean
+          description: true for a delete moved in from another storage (data_format.md §6.10).
+        deleted_at:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          description: Only with import, importer role (data_format.md §6.10).
+        deleted_by:
+          type: string
+          description: Only with import, importer role (data_format.md §6.10).
+        deleted_bench:
+          type: string
+          description: Only with import, importer role (data_format.md §6.10).
+        deleted_was_current:
+          type: boolean
+          description: A run's only (E11). Only with import, importer role (data_format.md §6.10); kept as sent, and nothing is handed on.
+    DeleteRequest:
+      description: E11's delete body.
+      allOf:
+        - $ref: "#/components/schemas/ManagerRequest"
+        - $ref: "#/components/schemas/DeleteFields"
+    ArtifactDeleteRequest:
+      description: E12's delete body.
+      allOf:
+        - $ref: "#/components/schemas/ArtifactManagerRequest"
+        - $ref: "#/components/schemas/DeleteFields"
+    DeleteResult:
+      type: object
+      required: [run]
+      properties:
+        run: {$ref: "#/components/schemas/RunSummary"}
+        pointer:
+          description: |
+            After a delete of the current run: the pointer it was handed to, or null when no
+            complete run remains (the test has no pointer on that board any more). After a
+            restore that made the run current: the pointer. Absent when nothing moved (a replay
+            included).
+          oneOf: [{$ref: "#/components/schemas/TestPointer"}, {type: "null"}]
+    ArtifactRef:
+      type: object
+      description: |
+        One artifact name by its kind, its board and its name, as E12 names it: the board's own
+        names as stored (a format-1 artifact's board has no part number and no revision), absent
+        parts left out; a project-level export has serial "".
+      required: [kind, serial, name]
+      properties:
+        kind: {$ref: "#/components/schemas/ArtifactKind"}
+        serial: {type: string}
+        part_number: {type: string}
+        board_revision: {type: string}
+        name: {type: string}
+    PurgeResult:
+      type: object
+      required: [runs, artifacts, purged]
+      properties:
+        runs: {type: integer, minimum: 0, description: How many runs went.}
+        artifacts: {type: integer, minimum: 0, description: How many artifact names went (all the generations of one name count once).}
+        purged:
+          type: object
+          description: |
+            What went, what expired included, so the app knows which of its trash entries are
+            gone (data_format.md §6.7). Both lists empty when nothing went.
+          required: [runs, artifacts]
+          properties:
+            runs:
+              type: array
+              items: {$ref: "#/components/schemas/RunId"}
+            artifacts:
+              type: array
+              items: {$ref: "#/components/schemas/ArtifactRef"}
+        to_delete:
+          type: object
+          description: |
+            In a project's own storages (declared), this project's blobs nothing references
+            now, by store_id written as a decimal string (`"2"`); the app deletes them through
+            its outbox, in S4's steps (data_format.md §6.7). For each storage exactly what S3
+            lists for this project then: what a replaced or deleted file left too, not only what
+            this purge freed, none S4 settled. Absent when there is none; a storage with none is
+            not a key.
+          propertyNames: {pattern: "^[0-9]+$"}
+          additionalProperties:
+            type: array
+            items: {$ref: "#/components/schemas/Version"}
+    BlobsByProject:
+      type: object
+      description: 'Blobs of a declared storage by project, `{"<project_id>": ["sha256:<hex>"]}`; a blob is a project''s (data_format.md §3.2).'
+      propertyNames: {$ref: "#/components/schemas/ProjectId"}
+      additionalProperties: {$ref: "#/components/schemas/VersionList"}
+    BlobsToDelete:
+      type: object
+      description: S3's answer.
+      required: [to_delete]
+      properties:
+        to_delete: {$ref: "#/components/schemas/BlobsByProject"}
+    BlobsSetAside:
+      type: object
+      description: S4's body, the blobs the app set aside (renamed to `<sha256>.<writer>.deleting`).
+      required: [set_aside]
+      properties:
+        set_aside: {$ref: "#/components/schemas/BlobsByProject"}
+    BlobsSetAsideResult:
+      type: object
+      description: S4's answer.
+      required: [delete, keep, to_delete]
+      properties:
+        delete:
+          allOf: [{$ref: "#/components/schemas/BlobsByProject"}]
+          description: Still referenced by nothing, dropped from the list; the app deletes its set-aside copies.
+        keep:
+          allOf: [{$ref: "#/components/schemas/BlobsByProject"}]
+          description: Referenced by a push since S3 listed them; the app renames each back, or deletes its copy when `<sha256>` is there again.
+        to_delete: {$ref: "#/components/schemas/BlobsByProject"}
+
+    # ---- Library --------------------------------------------------------------------------
+
+    LibraryItem:
+      type: object
+      description: |
+        One version of a library item (data_format.md §4.16). Identity `<id>@<version>` within
+        its kind, compared exactly; content `content_sha256`. Created once, never overwritten.
+        In the list, without manifest.
+      required: [format_version, kind, id, version, content_sha256, contains_code, archive]
+      properties:
+        format_version: {$ref: "#/components/schemas/FormatVersion"}
+        kind: {$ref: "#/components/schemas/LibraryKind"}
+        id: {type: string}
+        version: {type: string}
+        content_sha256: {$ref: "#/components/schemas/Sha256Hex"}
+        content_bytes: {type: integer, minimum: 0}
+        manifest: {type: object, description: "The kind's manifest, verbatim (data_format.md §4.16)."}
+        contains_code: {type: boolean, description: "Holds Python a PC would run; only a publisher login publishes it. The publisher's word: the installing PC looks in the archive itself."}
+        archive: {$ref: "#/components/schemas/File"}
+        missing: {$ref: "#/components/schemas/Missing"}
+        published_at:
+          allOf: [{$ref: "#/components/schemas/Time"}]
+          readOnly: true
+        published_by: {type: string, readOnly: true, description: The login the server authenticated.}
+        machine_id: {$ref: "#/components/schemas/MachineId"}
+    LibraryItemMultipart:
+      $ref: "#/components/schemas/MultipartBody"
+      description: "`json` is a LibraryItem; its archive's part for an api storage."
+    LibraryPushResult:
+      type: object
+      required: [status, item]
+      properties:
+        status: {type: string, enum: [saved, already]}
+        item: {$ref: "#/components/schemas/LibraryItem"}
+
+    # ---- Bodies ---------------------------------------------------------------------------
+
+    MultipartBody:
+      type: object
+      description: |
+        A multipart body (multipart/form-data up, multipart/mixed down; data_format.md §3.3).
+        The first part, named `json`, is the object (application/json, possibly with its own
+        `Content-Encoding: gzip`). Every other part is named `sha256:<64 hex>` of its bytes,
+        carries the file's mimetype as Content-Type and a `filename` hint, and is checked by
+        the receiver (`422 digest_mismatch` on a mismatch). One part per distinct content. A
+        part is at most 1 MiB (1,048,576 bytes): a larger file travels alone (B1, B2), and a
+        request carrying one is `400 bad_request` with `details.large`.
+      required: [json]
+      properties:
+        json:
+          type: object
+          description: The JSON object; which one, each body's description says.
+      patternProperties:
+        "^sha256:[0-9a-f]{64}$":
+          type: string
+          contentMediaType: application/octet-stream
+      additionalProperties: false
+    HaveRequest:
+      type: object
+      properties:
+        have: {$ref: "#/components/schemas/VersionList"}
+
+    # ---- Discovery and errors ---------------------------------------------------------------
+
+    Info:
+      type: object
+      description: |
+        /info (web_api_spec.md §3.1): exactly these fields. Without a token it answers `401`,
+        its envelope's details holding `api_versions` and `server` only.
+      required: [server, api_versions, server_time, limits, user]
+      properties:
+        server: {type: string}
+        api_versions:
+          type: array
+          items: {type: string}
+        server_time: {$ref: "#/components/schemas/TimeMs"}
+        limits:
+          type: object
+          required: [max_upload_bytes, max_file_bytes, retention_days]
+          properties:
+            max_upload_bytes:
+              type: integer
+              minimum: 1
+              description: The largest JSON request, its parts included (`413 too_large` before its body is read).
+            max_file_bytes:
+              type: integer
+              minimum: 1
+              description: The largest file B1 takes alone (data_format.md §3.4b); the app checks it before sending.
+            retention_days:
+              type: integer
+              minimum: 1
+              description: |
+                How long a deleted run or artifact is kept before E13 removes it for good, in
+                days (90 unless the server's administrator set another; data_format.md §6.7).
+                The app shows from it when a deleted item goes.
+        user:
+          type: object
+          required: [name, roles]
+          properties:
+            name: {type: string}
+            roles:
+              type: array
+              items: {type: string, enum: [bench, publisher, importer, manager, reader]}
+            token_expires: {$ref: "#/components/schemas/Time"}
+    ErrorEnvelope:
+      type: object
+      description: web_api_spec.md §5. `message` is one sentence the app shows.
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, kind, request_id, message]
+          properties:
+            code: {type: string}
+            kind:
+              type: string
+              enum: [invalid, not_found, auth, denied, unreachable, timeout, corrupt, foreign, cancelled, internal]
+            request_id: {type: string}
+            message: {type: string}
+            path: {type: string}
+            retry_after_s:
+              oneOf: [{type: integer}, {type: "null"}]
+            details:
+              type: object
+              properties:
+                missing:
+                  $ref: "#/components/schemas/VersionList"
+                current: {description: "For changed: what the server holds now."}
+                version: {type: integer, description: "For same_as_release: the release with this content."}
+                changed:
+                  type: array
+                  description: "For changed on a release (P10): the paths named whose version is not the server's."
+                  items: {type: string}
+                large:
+                  $ref: "#/components/schemas/VersionList"
+                  description: "For bad_request: the parts over 1 MiB, which travel alone (B1)."
+                max_upload_bytes: {type: integer, description: "For too_large on a JSON request."}
+                max_file_bytes: {type: integer, description: "For too_large on B1."}
+                content_sha256: {$ref: "#/components/schemas/Sha256Hex"}
+                format_version: {type: integer, description: "For a refused object: the format_version sent."}
+                known: {type: integer, description: "For a refused object: the highest format_version the server takes for it."}
+      examples:
+        - error:
+            code: missing_files
+            kind: invalid
+            request_id: 7c1f9a02
+            message: "2 files of this run are not in the storage yet; send them, then the run again."
+            details:
+              missing: ["sha256:0e6a000000000000000000000000000000000000000000000000000000000000"]

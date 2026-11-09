@@ -1,0 +1,482 @@
+# Server contract: what the conformance kit checks
+
+Which normative rule of `procedo_server_contract.md` (and its twin `procedo_api.openapi.yaml`)
+a test of the **server conformance kit** catches, rule by rule. **Generated** by
+`scripts/contract_coverage.py --write`: do not edit this page, edit its sources (below);
+`tests/test_contract_rule_coverage.py` fails when it is stale.
+
+**The kit** is what `scripts/build_server_kit.py` ships and its `pytest.ini` runs (`-m servers`).
+A kit test is named here by the suite holding it:
+
+| Name | Kit test |
+|---|---|
+| `ev:<case>` | `test_evidence_conformance_api.py::test_every_action_reads_back_as_it_went_in_over_the_api[<case>-api]` (the cases are in `test_evidence_conformance.py`) |
+| `pr:<case>` | `test_project_conformance.py::test_every_action_reads_back_as_it_went_in_over_the_json_api[<case>-api]` |
+| `lib:<case>` | `test_library_conformance.py::test_every_library_action_over_the_json_api[<case>-api]` |
+| `<suite>::<test>` | a plain test of a suite: `http` is `test_server_http_conformance.py`, `conv` `test_server_contract_conventions.py`, `ev-raw` `test_server_contract_evidence.py`, `pr-raw` `test_server_contract_projects.py` (raw HTTP), `pr` `test_project_conformance.py`, `ev` `test_evidence_conformance_api.py`, `lib` `test_library_conformance.py`; any other suite by its module |
+| `<suite>::*` | every test of that suite |
+
+**How a rule is judged.** A rule is covered only when a kit test **fails** against a server
+that breaks it. Making the call is not enough: the store suites go through the app's client, so
+each claim was checked against what the client does with the answer. Three things the client
+does hide a server's fault:
+
+- it **checks before sending** (a test name where a test id goes, a delete without a reason, a
+  file over `max_file_bytes`), so the server's refusal is never reached;
+- it **tolerates** (sorts a list itself, ignores a field, accepts parts it did not ask for,
+  reads absent and `null` alike, recomputes `current` and a board's lot from the entries);
+- it **reads the kind, not the status**: the store suites assert `kind` (sometimes `code`),
+  never the HTTP status.
+
+| Status | Meaning |
+|---|---|
+| COVERED | A kit test fails when a server breaks the rule: the tests listed claim it. |
+| GAP | No kit test fails for every way of breaking it: untested, happy path only, partly covered, or the client tolerates it (the row says which). |
+| HAND | No kit test; the kit's `README.md` lists it under "Check these by hand". |
+| UNTESTABLE | No kit test can provoke or observe it (the row says why). |
+
+A kit test that runs only on demand (it waits on the server) says so beside its name: off by
+default, it runs when the environment sets its variable to `1`. Its rules count as covered:
+`tests/test_contract_faults.py` runs it with the variable set, against the reference server
+keeping every rule and breaking each. A covered rule no server can break so that a test sees
+it says so in its row, with why: its tests show the rule holds, and no fault proves them.
+
+**Where it comes from.** Each rule is an anchor in the contract, `<a id="rule-<id>"></a>`
+before its sentence or table row (the ids below link to it), described in
+`tests/contract_rules.py`. A kit case claims the rules it catches: `rules=(...)` on its
+`conformance(...)` registration in a store suite, `@pytest.mark.rule(...)` on a plain test.
+Every other rule is a line of `tests/contract_rule_gaps.py` saying why. Adding a rule to the
+contract fails the repository's tests until a kit case claims it or the gap table says why not.
+
+## Totals
+
+| | Rules |
+|---|---|
+| Normative rules | **351** |
+| COVERED | **338** |
+| GAP | **0** |
+| HAND | **12** |
+| UNTESTABLE | **1** |
+| Not covered (GAP + HAND + UNTESTABLE) | **13** |
+
+By section (COVERED / all):
+
+- 2. Conventions: 37/37
+- 3. Address, headers, discovery, authentication, transport: 26/32
+- 4. Errors: 14/18
+- 5. The objects: 75/75
+- 6.1–6.2 Rules shared by the calls, and how bytes travel: 24/24
+- 6.3 Projects, tests and releases: 39/39
+- 6.4 Evidence: 78/79
+- 6.5 The library, 6.6 storages and large files: 28/29
+- 6.7 The import: 12/12
+- 7. Storages the app reaches itself: 4/5
+- 9. The machine-readable twin: 1/1
+
+## The rules
+
+### 2. Conventions
+
+| Rule id | § | Rule | Status | Kit test(s), or why not |
+|---|---|---|---|---|
+| [`2.1.two-methods`](procedo_server_contract.md#rule-2.1.two-methods) | 2.1, 4.3 | Only GET and POST; another method or an unknown call is `405`/`501 unsupported`, kind `invalid`. | COVERED | `conv::test_a_call_the_server_does_not_take_is_unsupported_never_not_found`, `conv::test_another_method_is_unsupported`, `conv::test_head_is_refused_with_the_servers_signature` |
+| [`2.2.unknown-fields-kept`](procedo_server_contract.md#rule-2.2.unknown-fields-kept) | 2.2 | A field the server does not know is stored and returned unchanged. | COVERED | `conv::test_a_field_the_server_does_not_know_is_kept` |
+| [`2.2.unknown-null-absent`](procedo_server_contract.md#rule-2.2.unknown-null-absent) | 2.2 | An unknown field sent as `null` is not kept and reads back absent; inside an unknown field's value everything is kept, `null` included. | COVERED | `conv::test_an_unknown_field_sent_null_reads_back_absent` |
+| [`2.2.no-null-in-answers`](procedo_server_contract.md#rule-2.2.no-null-in-answers) | 2.2 | An answer leaves out a field with no value, never `null`, except the listed ones. | COVERED | `conv::test_a_field_with_no_value_is_left_out_not_null` |
+| [`2.2.answer-fields-ignored`](procedo_server_contract.md#rule-2.2.answer-fields-ignored) | 2.2 | *answer* fields a client sends are ignored (outside an import). | COVERED | `conv::test_answer_fields_a_client_sends_are_ignored_and_every_server_time_is_its_clock` |
+| [`2.4.nfc`](procedo_server_contract.md#rule-2.4.nfc) | 2.4 | A name is stored in NFC; one sent in another form is that name. | COVERED | `conv::test_a_name_sent_in_another_unicode_form_is_stored_in_nfc` |
+| [`2.4.case-first-spelling`](procedo_server_contract.md#rule-2.4.case-first-spelling) | 2.4 | A name differing only by case is the stored one; answers give the first spelling. | COVERED | `conv::test_a_name_differing_only_by_case_answers_its_first_spelling` |
+| [`2.4.record-kept-as-sent`](procedo_server_contract.md#rule-2.4.record-kept-as-sent) | 2.4 | A test name kept as a record (a Run's, a Release's `test`) is never respelled. | COVERED | `ev:a_run_reads_back_its_test_name_and_test_id` |
+| [`2.4.exact-exceptions`](procedo_server_contract.md#rule-2.4.exact-exceptions) | 2.4 | A board field's name, a library `<id>@<version>`, a storage `identity` and the never-travel names compare exactly. | COVERED | `conv::test_a_board_fields_name_and_a_never_travel_name_compare_exactly`, `pr-raw::test_a_library_version_differing_only_by_case_is_409_exists`, `pr-raw::test_s2_declares_a_storage_once_by_its_exact_identity` |
+| [`2.5.test-id-from-test-json`](procedo_server_contract.md#rule-2.5.test-id-from-test-json) | 2.5, 5.3 | The server reads a test's id from `tests/<test>/test.json` and nowhere else. | COVERED | `pr:a_release_of_an_id_no_test_holds_is_not_found`, `pr:the_tests_read_back_with_their_format_and_files` |
+| [`2.5.filed-under-id`](procedo_server_contract.md#rule-2.5.filed-under-id) | 2.5 | Releases, runs and marks are filed under the test id; a rename moves none; a deleted test keeps them; a new test of the name starts with none. | COVERED | `ev:two_ids_with_one_recorded_name_keep_their_own_runs_and_mark` |
+| [`2.5.malformed-test-id-400-first`](procedo_server_contract.md#rule-2.5.malformed-test-id-400-first) | 2.5, P8, P8b, P10, E6, E2 | A `{test_id}` (or E2's `test_id`) that is not a lower-case UUID is `400 bad_request`, before the project's existence is looked at. | COVERED | `conv::test_a_malformed_test_id_is_400_before_the_project_is_looked_at`, `pr-raw::test_a_test_name_where_a_test_id_goes_is_400_before_the_project_is_looked_at` |
+| [`2.6.board-three-parts`](procedo_server_contract.md#rule-2.6.board-three-parts) | 2.6 | A board is its part number, revision and serial together; two boards may share a serial. | COVERED | `ev:board_entries_read_back_in_the_order_received`, `ev:runs_complete_and_incomplete_read_back_with_their_files` |
+| [`2.6.empty-value-400`](procedo_server_contract.md#rule-2.6.empty-value-400) | 2.6, E1 | A `""` part number, revision or serial (but an export's serial) is `400 bad_request`. | COVERED | `conv::test_an_empty_board_name_is_refused` |
+| [`2.6.blanks-400`](procedo_server_contract.md#rule-2.6.blanks-400) | 2.6, E1 | A board name beginning or ending with a blank is `400` wherever one board is named or sent. | COVERED | `conv::test_a_board_name_with_a_blank_around_it_is_refused` |
+| [`2.6.filter-matches-nothing`](procedo_server_contract.md#rule-2.6.filter-matches-nothing) | 2.6 | In a list or search filter such a value matches nothing and is not refused. | COVERED | `conv::test_a_filter_with_a_blank_around_it_matches_nothing_and_is_not_refused` |
+| [`2.6.query-empty-is-none`](procedo_server_contract.md#rule-2.6.query-empty-is-none) | 2.6, 6.4 | A query parameter naming a board part with an empty value means "none". | COVERED | `ev:runs_complete_and_incomplete_read_back_with_their_files` |
+| [`2.7.time-format`](procedo_server_contract.md#rule-2.7.time-format) | 2.7 | Server-set times are UTC with `Z`, in seconds (milliseconds for `server_time`). | COVERED | `conv::test_a_library_item_names_the_login_and_the_servers_time`, `conv::test_answer_fields_a_client_sends_are_ignored_and_every_server_time_is_its_clock`, `conv::test_every_read_answers_what_the_twin_says` |
+| [`2.8.digest-forms`](procedo_server_contract.md#rule-2.8.digest-forms) | 2.8 | Hashes are bare hex; versions are `sha256:<hex>`. | COVERED | `conv::test_a_reference_to_bytes_not_there_is_409_missing_files_and_nothing_is_written` |
+| [`2.8.own-fields-strings`](procedo_server_contract.md#rule-2.8.own-fields-strings) | 2.8 | A non-string value in a run's `extra`, a report's `fields` or a board's `details` is `400`. | COVERED | `conv::test_a_projects_own_field_that_is_not_a_string_is_refused` |
+| [`2.8.format-version-400`](procedo_server_contract.md#rule-2.8.format-version-400) | 2.8 | A `format_version` the object does not have is `400`, `details` `format_version` and `known`. | COVERED | `conv::test_a_format_version_the_object_does_not_have_is_refused_with_the_known_one` |
+| [`2.9.text-or-reference`](procedo_server_contract.md#rule-2.9.text-or-reference) | 2.9 | UTF-8 under `tests/`, `functions/`, `config/`, `scenarios/` travels as text whatever its size; every other file is a reference. | COVERED | `pr:a_project_created_reads_back_byte_for_byte` |
+| [`2.9.wrong-form-400`](procedo_server_contract.md#rule-2.9.wrong-form-400) | 2.9 | A file in the wrong form refuses the whole request, `400`, nothing written. | COVERED | `conv::test_a_file_in_the_wrong_form_refuses_the_whole_request`, `pr-raw::test_a_malformed_change_refuses_the_whole_request` |
+| [`2.9.text-size-version-400`](procedo_server_contract.md#rule-2.9.text-size-version-400) | 2.9 | A text whose UTF-8 bytes are not its `version` and `size` is `400`. | COVERED | `conv::test_a_text_whose_bytes_are_not_its_version_and_size_is_refused`, `pr-raw::test_a_malformed_change_refuses_the_whole_request` |
+| [`2.10.path-case`](procedo_server_contract.md#rule-2.10.path-case) | 2.10 | Paths compare as names; a write under another case replaces the file and keeps its spelling; a new file takes its folders' spelling. | COVERED | `pr:a_name_compares_by_its_nfc_form_and_folded_case` |
+| [`2.10.move-case-respells`](procedo_server_contract.md#rule-2.10.move-case-respells) | 2.10 | A move whose destination differs only by case changes the spelling. | COVERED | `conv::test_a_move_differing_only_by_case_respells_the_folder` |
+| [`2.10.path-names-400`](procedo_server_contract.md#rule-2.10.path-names-400) | 2.10, P9, P11 | A path name no PC can hold (empty, `.`, `..`, `/ \ < > : " \| ? *`, a control character, a trailing dot or blank, a device name, over 255 characters, a blank at either end) refuses the whole request, `400`. | COVERED | `conv::test_a_new_project_with_a_path_no_pc_can_hold_is_refused`, `conv::test_a_path_no_pc_can_hold_refuses_the_whole_request`, `pr-raw::test_a_malformed_change_refuses_the_whole_request` |
+| [`2.11.unknown-query-param`](procedo_server_contract.md#rule-2.11.unknown-query-param) | 2.11 | A query parameter a call does not define is refused: `400 unsupported_filter` on E2 and E8, `400 bad_request` elsewhere. | COVERED | `conv::test_a_query_parameter_a_call_does_not_define_is_refused` |
+| [`2.12.gzip-json-body`](procedo_server_contract.md#rule-2.12.gzip-json-body) | 2.12 | A plain JSON body sent with `Content-Encoding: gzip` is accepted. | COVERED | `pr:a_change_leaving_a_test_without_a_valid_test_id_is_refused_alone` |
+| [`2.12.gzip-json-part`](procedo_server_contract.md#rule-2.12.gzip-json-part) | 2.12 | The `json` part of a multipart body may carry its own gzip. | COVERED | `pr:a_project_created_reads_back_byte_for_byte` |
+| [`2.12.gzip-whole-multipart`](procedo_server_contract.md#rule-2.12.gzip-whole-multipart) | 2.12 | A whole multipart body sent gzipped is accepted. | COVERED | `conv::test_a_whole_multipart_body_sent_gzipped_is_accepted` |
+| [`2.12.no-gzip-multipart-answer`](procedo_server_contract.md#rule-2.12.no-gzip-multipart-answer) | 2.12 | A server never gzips a whole multipart answer. | COVERED | `conv::test_a_multipart_answer_is_never_gzipped_whole`, `pr-raw::test_an_answer_takes_its_form_from_what_it_sends_never_from_accept` |
+| [`2.12.digest-decoded`](procedo_server_contract.md#rule-2.12.digest-decoded) | 2.12, E1 | The replay digest of the JSON is of its bytes with every encoding undone. | COVERED | `conv::test_a_replay_is_the_same_json_whatever_its_encoding` |
+| [`2.13.too-large-first`](procedo_server_contract.md#rule-2.13.too-large-first) | 2.13, 3.6 | A request over its size limit is `413` before anything else is looked at (the token, the path): even naming a project or a storage the server does not hold. | COVERED | `conv::test_a_body_over_its_limit_is_413_before_anything_else_is_looked_at` |
+| [`2.13.token-first`](procedo_server_contract.md#rule-2.13.token-first) | 2.13, 3.4 | A request without a valid token is `401`, whatever else is wrong with it (an undefined query parameter included). | COVERED | `conv::test_a_request_without_a_valid_token_is_401_whatever_else_is_wrong` |
+| [`2.13.parameters-before-item`](procedo_server_contract.md#rule-2.13.parameters-before-item) | 2.13, 2.11 | An undefined query parameter is `400` even when the path names nothing the server holds. | COVERED | `conv::test_an_undefined_parameter_is_400_even_where_the_path_names_nothing_held` |
+| [`2.13.role-before-item`](procedo_server_contract.md#rule-2.13.role-before-item) | 2.13, 3.5 | A login whose roles do not allow the call is `403`, even when what it names does not exist. | COVERED | `conv::test_a_login_the_call_is_not_for_is_403_even_where_nothing_named_is_held` |
+
+### 3. Address, headers, discovery, authentication, transport
+
+| Rule id | § | Rule | Status | Kit test(s), or why not |
+|---|---|---|---|---|
+| [`3.1.base-slash`](procedo_server_contract.md#rule-3.1.base-slash) | 3.1, 8.1-6 | `…/testprocedure` and `…/testprocedure/` are the same server; the whole suite passes with both. | COVERED | `conv::test_the_key_calls_answer_on_the_base_with_or_without_its_trailing_slash`, `http::test_a_project_written_through_one_form_of_the_base_reads_back_through_the_other` (no fault proves it: both forms send the same requests: the app adds exactly one slash before api/v1/, so no server can pass one and fail the other; the test proves the app reaches one server through both) |
+| [`3.1.path-prefix`](procedo_server_contract.md#rule-3.1.path-prefix) | 3.1, 8.1-6 | A base with a path prefix MUST work. | HAND | The reference server runs without a prefix; an external server is run under whatever base it is given (README hand check 8). |
+| [`3.1.no-absolute-url`](procedo_server_contract.md#rule-3.1.no-absolute-url) | 3.1, 8.1-6 | No answer body or header carries an absolute URL of the API. | COVERED | `conv::test_every_read_answers_what_the_twin_says` |
+| [`3.1.opaque-continuation`](procedo_server_contract.md#rule-3.1.opaque-continuation) | 3.1, 8.1-6 | A `cursor` and a change `token` are opaque and accepted back verbatim. | COVERED | `conv::test_a_cursor_and_a_token_are_taken_back_verbatim` |
+| [`3.1.segment-decoding`](procedo_server_contract.md#rule-3.1.segment-decoding) | 3.1, 8.1-7 | A path is split on `/`, then each segment percent-decoded once (`%2F` stays in one segment). | COVERED | `conv::test_a_name_holding_slash_hash_plus_and_blanks_reaches_the_server_as_one_name` |
+| [`3.1.query-plus`](procedo_server_contract.md#rule-3.1.query-plus) | 3.1, 8.1-7 | A `+` in a query value is a plus, never a space. | COVERED | `conv::test_a_name_holding_slash_hash_plus_and_blanks_reaches_the_server_as_one_name` |
+| [`3.1.plain-http`](procedo_server_contract.md#rule-3.1.plain-http) | 3.1, 3.6, 8.1-5 | Plain `http` only on loopback; otherwise refused or redirected, never accepting a token. | HAND | README hand check 1. |
+| [`3.2.x-bench-store`](procedo_server_contract.md#rule-3.2.x-bench-store) | 3.2, 8.1-2 | `X-Bench-Store: v1` on every answer, errors included. | COVERED | `http::*` |
+| [`3.2.x-bench-store-own-process`](procedo_server_contract.md#rule-3.2.x-bench-store-own-process) | 3.2 | Set by the API process, not by a proxy. | HAND | README hand check 5. |
+| [`3.2.x-request-id`](procedo_server_contract.md#rule-3.2.x-request-id) | 3.2, 8.1-2 | `X-Request-Id` on every answer, 2xx included. | COVERED | `conv::test_every_read_answers_what_the_twin_says` |
+| [`3.2.date`](procedo_server_contract.md#rule-3.2.date) | 3.2, 8.1-2 | `Date` on every answer, within 2 s of `server_time`. | COVERED | `conv::test_every_read_answers_what_the_twin_says` |
+| [`3.3.info-fields`](procedo_server_contract.md#rule-3.3.info-fields) | 3.3, 8.1-1 | `/info` with a valid token answers exactly `server`, `api_versions`, `server_time`, `limits` (three integers ≥ 1), `user`. | COVERED | `http::test_info_answers_exactly_its_fields_to_a_valid_token` |
+| [`3.3.info-api-version-1`](procedo_server_contract.md#rule-3.3.info-api-version-1) | 3.3 | `api_versions` lists `"1"`. | COVERED | `http::test_info_answers_exactly_its_fields_to_a_valid_token`, `http::test_the_apps_discovery_takes_the_base_with_or_without_its_trailing_slash` |
+| [`3.3.info-roles`](procedo_server_contract.md#rule-3.3.info-roles) | 3.3 | `user.roles` names the login's roles. | COVERED | `http::test_info_answers_exactly_its_fields_to_a_valid_token` |
+| [`3.3.info-token-expires`](procedo_server_contract.md#rule-3.3.info-token-expires) | 3.3 | `user.token_expires` (SHOULD). | COVERED | `conv::test_the_tokens_expiry_when_given_is_a_time_to_come` |
+| [`3.3.info-401-public`](procedo_server_contract.md#rule-3.3.info-401-public) | 3.3, 3.4, 8.1-1 | `/info` without a valid token: `401`, `WWW-Authenticate`, `X-Bench-Store`, `details` exactly `api_versions` and `server`. | COVERED | `http::test_info_without_a_valid_token_is_401_with_only_the_public_details` |
+| [`3.3.info-403`](procedo_server_contract.md#rule-3.3.info-403) | 3.3, 8.1-1 | A valid token that may not use this server: `403`, never `401`. | HAND | Needs a third login (README hand check 4). |
+| [`3.4.header-only`](procedo_server_contract.md#rule-3.4.header-only) | 3.4 | The token is taken from the `Authorization` header only. | COVERED | `conv::test_a_token_anywhere_but_the_authorization_header_is_no_token` |
+| [`3.4.no-token-401`](procedo_server_contract.md#rule-3.4.no-token-401) | 3.4 | No token: `401`, `WWW-Authenticate: Bearer`, code `invalid_token`, on every call. | COVERED | `conv::test_every_call_without_a_valid_token_is_401` |
+| [`3.4.bad-token-401`](procedo_server_contract.md#rule-3.4.bad-token-401) | 3.4 | A malformed, expired or revoked token: `401`, `Bearer error="invalid_token"`, code `invalid_token` or `expired_token`. | COVERED | `conv::test_every_call_without_a_valid_token_is_401` |
+| [`3.5.every-login-reads`](procedo_server_contract.md#rule-3.5.every-login-reads) | 3.5 | Every login reads, whatever its roles. | COVERED | `conv::test_every_login_reads_whatever_its_roles` |
+| [`3.5.manager-only-no-push`](procedo_server_contract.md#rule-3.5.manager-only-no-push) | 3.5 | A login holding only `manager` cannot push a run. | COVERED | `conv::test_a_login_holding_only_manager_cannot_push_a_run` |
+| [`3.5.write-needs-role`](procedo_server_contract.md#rule-3.5.write-needs-role) | 3.5 | A write the login's roles do not allow: `403 forbidden`. | COVERED | `conv::test_a_write_the_logins_roles_do_not_allow_is_403_forbidden` |
+| [`3.5.importer-beside-bench`](procedo_server_contract.md#rule-3.5.importer-beside-bench) | 3.5, 6.7 | A login holding `importer` beside `bench` imports with `"import": true` and writes as a bench without it. | COVERED | `pr-raw::test_a_login_holding_importer_beside_bench_imports_and_pushes_as_a_bench` |
+| [`3.5.not-a-manager`](procedo_server_contract.md#rule-3.5.not-a-manager) | 3.5, E11–E13 | A delete, restore or purge from a non-manager: `403 not_a_manager`. | COVERED | `conv::test_a_delete_restore_or_purge_from_a_bench_is_403_not_a_manager` |
+| [`3.6.tls`](procedo_server_contract.md#rule-3.6.tls) | 3.6, 8.1-5 | `https` only; a private CA works. | HAND | README hand check 1. |
+| [`3.6.proxy`](procedo_server_contract.md#rule-3.6.proxy) | 3.6 | A reverse proxy streams request bodies (the answer to an upload within 30 s of its last byte), starts each answer within 30 s, passes `Authorization`, allows the advertised sizes, keeps `Date`, neither strips nor adds `X-Bench-Store`. | HAND | A deployment's proxy, not the API: the kit reaches what it is pointed at and cannot tell a proxy holding a body from a slow server (README hand check 12). |
+| [`3.6.keep-alive`](procedo_server_contract.md#rule-3.6.keep-alive) | 3.6, 8.1-5 | One connection serves at least five sequential requests. | COVERED | `http::test_one_connection_serves_five_requests_in_a_row` |
+| [`3.6.length-required`](procedo_server_contract.md#rule-3.6.length-required) | 3.6, 4.3 | A body with no `Content-Length`: `411 length_required`. | COVERED | `conv::test_a_body_without_its_length_is_411` |
+| [`3.6.too-large-before-body`](procedo_server_contract.md#rule-3.6.too-large-before-body) | 3.6, 4.3, 6.2 | Over `max_upload_bytes`: `413 too_large`, `details.max_upload_bytes`, before the body is read; `Expect: 100-continue` honoured. | COVERED | `conv::test_a_body_over_the_limit_is_413_before_it_is_read`, `pr-raw::test_a_body_over_its_limit_is_413_before_it_is_sent` |
+| [`3.7.G2-all-or-nothing`](procedo_server_contract.md#rule-3.7.G2-all-or-nothing) | 3.7 | A step called all-or-nothing (a run push, one P9 change) is exactly that. | COVERED | `conv::test_a_reference_to_bytes_not_there_is_409_missing_files_and_nothing_is_written` |
+| [`3.7.G3-one-clock`](procedo_server_contract.md#rule-3.7.G3-one-clock) | 3.7 | `Date`, `server_time` and every server-set time come from one clock. | COVERED | `conv::test_a_library_item_names_the_login_and_the_servers_time`, `conv::test_answer_fields_a_client_sends_are_ignored_and_every_server_time_is_its_clock` |
+
+### 4. Errors
+
+| Rule id | § | Rule | Status | Kit test(s), or why not |
+|---|---|---|---|---|
+| [`4.3.5xx-signed`](procedo_server_contract.md#rule-4.3.5xx-signed) | 3.2, 4.1 | `5xx` answers carry the headers and the envelope. | HAND | README hand check 7. |
+| [`4.3.own-refusals`](procedo_server_contract.md#rule-4.3.own-refusals) | 4, 8.1-4 | A server's own refusals answer a status of 4.3 with a kind. | HAND | README hand check 6. |
+| [`4.1.envelope`](procedo_server_contract.md#rule-4.1.envelope) | 4.1, 8.1-3 | Every non-2xx body is the envelope (`code`, `kind`, `request_id` = `X-Request-Id`, `message`), `application/json`. | COVERED | `conv::test_a_write_the_logins_roles_do_not_allow_is_403_forbidden` |
+| [`4.3.400-invalid`](procedo_server_contract.md#rule-4.3.400-invalid) | 4.3 | `400` → kind `invalid`. | COVERED | `conv::test_a_board_name_with_a_blank_around_it_is_refused`, `conv::test_a_file_in_the_wrong_form_refuses_the_whole_request`, `conv::test_a_format_version_the_object_does_not_have_is_refused_with_the_known_one`, `conv::test_a_malformed_test_id_is_400_before_the_project_is_looked_at`, `conv::test_a_new_project_with_a_path_no_pc_can_hold_is_refused`, `conv::test_a_part_over_one_mib_is_400_naming_it_in_large`, `conv::test_a_path_no_pc_can_hold_refuses_the_whole_request`, `conv::test_a_projects_own_field_that_is_not_a_string_is_refused`, `conv::test_a_query_parameter_a_call_does_not_define_is_refused`, `conv::test_a_text_whose_bytes_are_not_its_version_and_size_is_refused`, `conv::test_an_empty_board_name_is_refused` |
+| [`4.3.401-auth`](procedo_server_contract.md#rule-4.3.401-auth) | 4.3 | `401` → kind `auth`. | COVERED | `http::test_any_other_call_without_a_valid_token_is_401`, `http::test_info_without_a_valid_token_is_401_with_only_the_public_details` |
+| [`4.3.403-denied`](procedo_server_contract.md#rule-4.3.403-denied) | 4.3 | `403` → kind `denied`. | COVERED | `http::test_a_valid_login_without_the_right_is_403_never_401` |
+| [`4.3.404-signed`](procedo_server_contract.md#rule-4.3.404-signed) | 4.3, 3.2 | `404 not_found` with `X-Bench-Store`. | COVERED | `http::test_an_item_the_server_does_not_hold_is_404_with_its_signature` |
+| [`4.3.405-501`](procedo_server_contract.md#rule-4.3.405-501) | 4.3 | `405`/`501 unsupported` → kind `invalid`. | COVERED | `conv::test_a_call_the_server_does_not_take_is_unsupported_never_not_found`, `conv::test_another_method_is_unsupported` |
+| [`4.3.408`](procedo_server_contract.md#rule-4.3.408) | 4.3 | `408 request_timeout` → kind `timeout`. | COVERED | `conv::test_a_body_that_stops_arriving_is_408_request_timeout` (runs only with `PROCEDO_KIT_SLOW=1`: off by default) |
+| [`4.3.409-invalid`](procedo_server_contract.md#rule-4.3.409-invalid) | 4.3 | `409` with `missing_files`, `changed`, `same_as_release`, `deleted`, `version_exists`, `exists` → kind `invalid`. | COVERED | `conv::test_a_project_or_library_version_held_already_is_409`, `conv::test_a_reference_to_bytes_not_there_is_409_missing_files_and_nothing_is_written`, `conv::test_a_release_conflict_is_409_with_what_the_server_holds`, `conv::test_a_write_to_what_a_manager_deleted_is_409_deleted`, `pr-raw::test_a_reference_to_bytes_not_there_is_409_missing_files_and_nothing_written` |
+| [`4.3.409-run-conflict`](procedo_server_contract.md#rule-4.3.409-run-conflict) | 4.3 | `409 run_conflict` → kind `corrupt`. | COVERED | `conv::test_a_replay_is_the_same_json_whatever_its_encoding` |
+| [`4.3.410-gone`](procedo_server_contract.md#rule-4.3.410-gone) | 4.3, P3 | `410 gone` → kind `not_found`. | COVERED | `pr-raw::test_a_since_token_the_server_cannot_answer_from_is_410_gone_kind_not_found` |
+| [`4.3.416`](procedo_server_contract.md#rule-4.3.416) | 4.3, B2 | `416 range_not_satisfiable` → `corrupt`, `Content-Range: bytes */<size>`. | COVERED | `conv::test_a_range_past_the_end_is_416_with_the_files_size`, `pr-raw::test_b2_answers_one_range_206_and_past_the_end_416` |
+| [`4.3.422`](procedo_server_contract.md#rule-4.3.422) | 4.3, 6.2 | `422 digest_mismatch` → `corrupt`. | COVERED | `conv::test_bytes_not_matching_their_name_are_422_digest_mismatch`, `pr-raw::test_a_part_whose_bytes_are_not_its_name_is_422_digest_mismatch` |
+| [`4.3.500-internal`](procedo_server_contract.md#rule-4.3.500-internal) | 4.3 | `500 internal` → kind `internal`. | HAND | No call can make a server fail on purpose (README hand check 9). |
+| [`4.3.retry-after`](procedo_server_contract.md#rule-4.3.retry-after) | 4.3, 8.1-4 | `429`, `503`, `507` carry `Retry-After` as integer seconds. | HAND | README hand check 2. |
+| [`4.4.details`](procedo_server_contract.md#rule-4.4.details) | 4.4 | Each code's `details`: `missing`, `current`, `changed`, `version`, `content_sha256`, `large`, `max_upload_bytes`, `max_file_bytes`, `format_version`, `known`. | COVERED | `conv::test_a_body_over_the_limit_is_413_before_it_is_read`, `conv::test_a_format_version_the_object_does_not_have_is_refused_with_the_known_one`, `conv::test_a_part_over_one_mib_is_400_naming_it_in_large`, `conv::test_a_project_or_library_version_held_already_is_409`, `conv::test_a_reference_to_bytes_not_there_is_409_missing_files_and_nothing_is_written`, `conv::test_a_release_conflict_is_409_with_what_the_server_holds` |
+| [`4.5.refusal-inside-200`](procedo_server_contract.md#rule-4.5.refusal-inside-200) | 4.5 | One item refused inside a request is not an error: P9, E6, E7, E10, E15 answer `200` with its status. | COVERED | `conv::test_a_pointer_moved_meanwhile_is_200_changed_not_an_error` |
+
+### 5. The objects
+
+| Rule id | § | Rule | Status | Kit test(s), or why not |
+|---|---|---|---|---|
+| [`5.1.file`](procedo_server_contract.md#rule-5.1.file) | 5.1 | A File carries `version`, `size`, and `text` or `store_id`. | COVERED | `pr:a_project_created_reads_back_byte_for_byte` |
+| [`5.2.project-answer`](procedo_server_contract.md#rule-5.2.project-answer) | 5.2, P2 | A Project carries `project_id`, `name`, `token`, `files`, `bundle`, `releases`. | COVERED | `pr:a_project_created_reads_back_byte_for_byte` |
+| [`5.2.project-missing`](procedo_server_contract.md#rule-5.2.project-missing) | 5.2 | `missing` names the files of an `api` storage the server cannot give; a missing file never hides the project. | COVERED | `pr-raw::test_a_damaged_blob_is_missing_and_the_bytes_sent_again_replace_it` |
+| [`5.2.project-store-id`](procedo_server_contract.md#rule-5.2.project-store-id) | 5.2 | A project's `store_id` names where its new files go. | COVERED | `pr-raw::test_a_projects_store_id_names_the_storage_its_new_files_go_to` |
+| [`5.2.never-travel-p11`](procedo_server_contract.md#rule-5.2.never-travel-p11) | 5.2, P11 | A P11 request sending a path that never travels: `400`. | COVERED | `pr::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole` |
+| [`5.2.never-travel-p9`](procedo_server_contract.md#rule-5.2.never-travel-p9) | 5.2, P9 | P9 refuses such a change alone (`refused`, kind `invalid`). | COVERED | `pr::test_a_push_of_a_path_that_never_travels_is_refused_alone` |
+| [`5.2.project-name-400`](procedo_server_contract.md#rule-5.2.project-name-400) | 5.2, P11 | P11's `name` must be one folder name on every PC, else `400`. | COVERED | `pr-raw::test_p11_refuses_a_name_no_pc_can_hold_as_a_folder` |
+| [`5.2.project-name-unique`](procedo_server_contract.md#rule-5.2.project-name-unique) | 5.2, P11 | A project's name is unique by case folding: a second is `409 exists`. | COVERED | `pr:creating_it_again_is_a_replay_and_another_under_its_id_or_name_is_refused` |
+| [`5.2.bundle-archive-kept`](procedo_server_contract.md#rule-5.2.bundle-archive-kept) | 5.2 | The bundle travels as one zip, kept as sent, never repacked. | COVERED | `pr-raw::test_a_bundles_archive_is_kept_as_sent_never_repacked` |
+| [`5.3.format-from-test-json`](procedo_server_contract.md#rule-5.3.format-from-test-json) | 5.3 | `format` is `test.json`'s `active`. | COVERED | `pr:the_tests_read_back_with_their_format_and_files` |
+| [`5.3.format-neither-is-code`](procedo_server_contract.md#rule-5.3.format-neither-is-code) | 5.3 | A `test.json` naming neither `text` nor `code` is `code`. | COVERED | `pr-raw::test_a_test_json_naming_neither_text_nor_code_is_code` |
+| [`5.3.test-files-with-functions`](procedo_server_contract.md#rule-5.3.test-files-with-functions) | 5.3 | A Test's `files` are its folder's plus every file under `functions/`. | COVERED | `pr:the_tests_read_back_with_their_format_and_files` |
+| [`5.3.latest-release`](procedo_server_contract.md#rule-5.3.latest-release) | 5.3 | `latest_release` is the highest release under its id. | COVERED | `pr:a_release_reads_back_with_its_documents`, `pr:a_rename_keeps_its_releases` |
+| [`5.3.test-id-rules-p9`](procedo_server_contract.md#rule-5.3.test-id-rules-p9) | 5.3, P9 | P9 checks the two test-id rules change by change, in order; a breaking change is `refused` alone. | COVERED | `pr:a_change_leaving_a_test_without_a_valid_test_id_is_refused_alone`, `pr:two_tests_with_one_test_id_are_refused` |
+| [`5.3.test-id-rules-p11`](procedo_server_contract.md#rule-5.3.test-id-rules-p11) | 5.3, P11 | P11 refuses a project breaking either rule, `400 bad_request`, nothing written. | COVERED | `pr-raw::test_p11_refuses_a_project_breaking_the_test_id_rules_400_nothing_written` |
+| [`5.3.other-id-another-test`](procedo_server_contract.md#rule-5.3.other-id-another-test) | 5.3 | A `test.json` written with another id makes its folder another test. | COVERED | `pr:a_release_of_an_id_no_test_holds_is_not_found` |
+| [`5.3.draft-fields`](procedo_server_contract.md#rule-5.3.draft-fields) | 5.3 | A Draft reads back with `test_id`, `based_on`, `fingerprint`, `content`. | COVERED | `pr-raw::test_p11_keeps_the_drafts_as_p9_does` |
+| [`5.3.draft-kept-when`](procedo_server_contract.md#rule-5.3.draft-kept-when) | 5.3 | A draft is kept only when its test exists after the request, its id is the `test.json`'s, and every change under its folder and `functions/` was saved; otherwise the test loses its draft; a `functions/` change drops none. | COVERED | `pr:a_draft_is_kept_only_with_its_tests_id` |
+| [`5.3.draft-moves-no-token`](procedo_server_contract.md#rule-5.3.draft-moves-no-token) | 5.3, P3, P9 | A draft has no result of its own and moves no change token; P3 reports none. | COVERED | `pr-raw::test_a_request_carrying_only_drafts_moves_no_token` |
+| [`5.4.release-fields`](procedo_server_contract.md#rule-5.4.release-fields) | 5.4 | A Release reads back with its fields and documents. | COVERED | `pr:a_release_reads_back_with_its_documents` |
+| [`5.4.numbering-per-id`](procedo_server_contract.md#rule-5.4.numbering-per-id) | 5.4 | Releases are numbered from 1 per test id, by the server. | COVERED | `pr:a_new_test_with_a_deleted_tests_name_starts_at_v1_and_sees_no_old_release` |
+| [`5.4.document-names`](procedo_server_contract.md#rule-5.4.document-names) | 5.4, P10 | Documents are named without `tests/<test>/`; a `functions/` path whole. | COVERED | `pr:a_release_reads_back_with_its_documents` |
+| [`5.4.numbered-before-releases`](procedo_server_contract.md#rule-5.4.numbered-before-releases) | 5.4 | `numbered_before_releases` is kept. | COVERED | `pr-raw::test_a_number_carried_before_releases_is_kept_and_the_next_release_follows_it` |
+| [`5.4.release-missing`](procedo_server_contract.md#rule-5.4.release-missing) | 5.4 | A Release's `missing`, by document name. | COVERED | `pr-raw::test_a_releases_document_the_server_cannot_give_is_missing_by_its_name` |
+| [`5.5.run-project-id`](procedo_server_contract.md#rule-5.5.run-project-id) | 5.5 | Every Run answer carries `project_id`. | COVERED | `ev-raw::test_a_run_reads_back_every_field_exactly_as_pushed` |
+| [`5.5.run-summary`](procedo_server_contract.md#rule-5.5.run-summary) | 5.5 | A run reads back with `run_id`, `started`, `ended`, `verdict`, `machine_id`, `complete`, `test`, `test_id`. | COVERED | `ev:runs_complete_and_incomplete_read_back_with_their_files` |
+| [`5.5.lot-format-2-400`](procedo_server_contract.md#rule-5.5.lot-format-2-400) | 5.5, E1 | A format-2 run sending `lot`: `400`. | COVERED | `ev-raw::test_a_format_2_run_sending_a_lot_is_refused` |
+| [`5.5.run-full`](procedo_server_contract.md#rule-5.5.run-full) | 5.5–5.7 | E3 gives the Run as pushed: `phases` (ord, name, attempt, outcome, times), `measurements` (values, units, limits, `criterion` as sent), `extra`, `bench_values`, `firmware_version`, `operator`, `station_id`, `test_version`, `draft`, `definition_sha256`, bundle, `app_version`. | COVERED | `ev-raw::test_a_run_reads_back_every_field_exactly_as_pushed` |
+| [`5.5.run-current`](procedo_server_contract.md#rule-5.5.run-current) | 5.5 | A Run's `current` says whether it is its test's current run. | COVERED | `ev-raw::test_a_run_reads_back_every_field_exactly_as_pushed` |
+| [`5.5.run-annotation`](procedo_server_contract.md#rule-5.5.run-annotation) | 5.5 | A Run carries its `annotation`. | COVERED | `ev:annotation_entries_read_back_in_the_order_received` |
+| [`5.5.run-missing`](procedo_server_contract.md#rule-5.5.run-missing) | 5.5, 2.1 rule 11 | A run whose file is gone still opens, the file in `missing`. | COVERED | `ev-raw::test_a_file_gone_from_the_api_storage_is_reported_missing` |
+| [`5.5.deleted-fields`](procedo_server_contract.md#rule-5.5.deleted-fields) | 5.5, E11 | `deleted_at`, `deleted_by_name`, `deleted_bench`, `deleted_station`, `deleted_reason`, `deleted_was_current`. | COVERED | `ev:a_deleted_run_is_kept_with_its_reason_until_purged` |
+| [`5.5.deleted-by-login`](procedo_server_contract.md#rule-5.5.deleted-by-login) | 5.5, E11 | `deleted_by` is the login the server authenticated, never a field the client sends. | COVERED | `ev-raw::test_deleted_by_is_the_login_the_server_authenticated` |
+| [`5.5.run-summary-light`](procedo_server_contract.md#rule-5.5.run-summary-light) | 5.5 | RunSummary leaves out `phases`, `files`, `missing`, `bench_values`, `extra`. | COVERED | `ev-raw::test_a_run_reads_back_every_field_exactly_as_pushed`, `ev-raw::test_e2_each_filter_finds_exactly_its_runs_newest_first` |
+| [`5.5.format-1-board`](procedo_server_contract.md#rule-5.5.format-1-board) | 5.5, E1, E2 | A format-1 run belongs to the "no part number" board whatever it recorded; E1 names that board; E2 finds it only with both filters empty. | COVERED | `ev-raw::test_a_format_1_run_belongs_to_the_no_part_number_board` |
+| [`5.8.runfile-bytes`](procedo_server_contract.md#rule-5.8.runfile-bytes) | 5.8 | Every RunFile reads back by its `/` name with its bytes. | COVERED | `ev:runs_complete_and_incomplete_read_back_with_their_files` |
+| [`5.8.runfile-role-mimetype`](procedo_server_contract.md#rule-5.8.runfile-role-mimetype) | 5.8 | `role`, `mimetype`, a run's files in several storages. | COVERED | `ev-raw::test_a_run_reads_back_every_field_exactly_as_pushed`, `ev-raw::test_e13_counts_what_went_and_lists_the_declared_storages_blobs` |
+| [`5.8.mimetype-absent`](procedo_server_contract.md#rule-5.8.mimetype-absent) | 5.8 | A RunFile sent without `mimetype` reads back without it: no default filled in. | COVERED | `ev-raw::test_a_run_file_sent_without_its_type_reads_back_without_one` |
+| [`5.9.entries-order`](procedo_server_contract.md#rule-5.9.entries-order) | 5.9 | Annotation entries read back as sent, in the order received. | COVERED | `ev:annotation_entries_read_back_in_the_order_received` |
+| [`5.9.received-at`](procedo_server_contract.md#rule-5.9.received-at) | 5.9 | Each entry has `received_at` on the server's clock. | COVERED | `ev:annotation_entries_read_back_in_the_order_received` |
+| [`5.9.current-flag`](procedo_server_contract.md#rule-5.9.current-flag) | 5.9 | Each entry's `current` is computed on every read from the order received. | COVERED | `ev-raw::test_an_annotations_current_entries_and_data_are_the_servers` |
+| [`5.9.data`](procedo_server_contract.md#rule-5.9.data) | 5.9 | `data` holds each slot's current entry in the stated shape. | COVERED | `ev-raw::test_an_annotations_current_entries_and_data_are_the_servers` |
+| [`5.10.serial-by-kind-400`](procedo_server_contract.md#rule-5.10.serial-by-kind-400) | 5.10, E10 | An export with a serial, a report or draft without one: `400`. | COVERED | `ev-raw::test_an_export_with_a_serial_and_a_report_or_draft_without_one_are_refused` |
+| [`5.10.artifact-fields`](procedo_server_contract.md#rule-5.10.artifact-fields) | 5.10 | `work_order`, `fields`, `generated`, `verdict`, `operator`, `tests`, `updated_at` are stored and answered. | COVERED | `ev-raw::test_an_artifacts_fields_and_records_read_back_as_pushed` |
+| [`5.10.generations`](procedo_server_contract.md#rule-5.10.generations) | 5.10, E10 | A report or export keeps every generation, numbered 1, 2, …; never replaced. | COVERED | `ev:reports_and_exports_keep_every_generation` |
+| [`5.10.artifact-missing`](procedo_server_contract.md#rule-5.10.artifact-missing) | 5.10 | An artifact's `missing`. | COVERED | `ev-raw::test_a_file_gone_from_the_api_storage_is_reported_missing` |
+| [`5.10.draft-version`](procedo_server_contract.md#rule-5.10.draft-version) | 5.10 | A draft's `sha256` is the app's; the server stores it and never computes it. | COVERED | `ev:a_draft_is_replaced_only_when_unchanged_since_it_was_read` |
+| [`5.10.info-key-order`](procedo_server_contract.md#rule-5.10.info-key-order) | 5.10 | `info` and `content` are kept with their key order at every level. | COVERED | `ev-raw::test_an_artifacts_fields_and_records_read_back_as_pushed` |
+| [`5.11.lot-details`](procedo_server_contract.md#rule-5.11.lot-details) | 5.11 | `lot` and `details` are the current entries' values. | COVERED | `ev-raw::test_a_boards_lot_and_details_are_its_current_entries` |
+| [`5.11.board-times`](procedo_server_contract.md#rule-5.11.board-times) | 5.11 | `created_at`, `last_ended` (runs not deleted only). | COVERED | `ev-raw::test_a_boards_times_and_a_board_whose_runs_are_all_gone_is_still_listed` |
+| [`5.11.board-created`](procedo_server_contract.md#rule-5.11.board-created) | 5.11 | A board comes into being with its first run, entry, or report or draft. | COVERED | `ev-raw::test_a_report_or_a_draft_creates_its_board_and_an_export_none` |
+| [`5.11.board-never-removed`](procedo_server_contract.md#rule-5.11.board-never-removed) | 5.11, E4 | A board whose runs are all deleted is still listed. | COVERED | `ev-raw::test_a_boards_times_and_a_board_whose_runs_are_all_gone_is_still_listed` |
+| [`5.11.field-name-exact`](procedo_server_contract.md#rule-5.11.field-name-exact) | 5.11, E15 | A field entry's slot is its `name` compared exactly. | COVERED | `ev-raw::test_a_boards_lot_and_details_are_its_current_entries` |
+| [`5.12.tests-by-test-id`](procedo_server_contract.md#rule-5.12.tests-by-test-id) | 5.12 | E5's `tests` are ordered by `test_id`. | COVERED | `ev-raw::test_e5_lists_tests_by_test_id_and_adds_their_current_runs` |
+| [`5.12.runs-newest-first`](procedo_server_contract.md#rule-5.12.runs-newest-first) | 5.12 | Each test's `runs`, newest first by `run_id`, each with the `test` it recorded. | COVERED | `ev:a_run_reads_back_its_test_name_and_test_id`, `ev:runs_complete_and_incomplete_read_back_with_their_files` |
+| [`5.12.include-current`](procedo_server_contract.md#rule-5.12.include-current) | 5.12, E5 | `include=current` adds each test id's current Run in full. | COVERED | `ev-raw::test_e5_lists_tests_by_test_id_and_adds_their_current_runs` |
+| [`5.12.deleted-left-out`](procedo_server_contract.md#rule-5.12.deleted-left-out) | 5.12 | A deleted run is left out. | COVERED | `ev:a_deleted_run_is_kept_with_its_reason_until_purged` |
+| [`5.12.all-deleted-not-listed`](procedo_server_contract.md#rule-5.12.all-deleted-not-listed) | 5.12 | A test id whose runs are all deleted is not listed. | COVERED | `ev-raw::test_e5_lists_tests_by_test_id_and_adds_their_current_runs` |
+| [`5.13.one-mark-per-test-id`](procedo_server_contract.md#rule-5.13.one-mark-per-test-id) | 5.13 | A board holds one mark per test id; moving one moves no other. | COVERED | `ev:the_mark_is_per_board_and_test_id` |
+| [`5.13.newer-complete-current`](procedo_server_contract.md#rule-5.13.newer-complete-current) | 5.13 | A complete run becomes current when there is no pointer or it ended strictly later. | COVERED | `ev:the_current_run_is_set_and_cleared` |
+| [`5.13.incomplete-never-current`](procedo_server_contract.md#rule-5.13.incomplete-never-current) | 5.13 | An incomplete run never becomes current. | COVERED | `ev:runs_complete_and_incomplete_read_back_with_their_files` |
+| [`5.13.tie-or-older-leaves`](procedo_server_contract.md#rule-5.13.tie-or-older-leaves) | 5.13 | A tie or an older run leaves the pointer as it is. | COVERED | `ev-raw::test_a_tie_an_older_run_and_an_incomplete_one_leave_the_pointer` |
+| [`5.13.demoted-keeps-ended`](procedo_server_contract.md#rule-5.13.demoted-keeps-ended) | 5.13 | A demoted pointer keeps its `ended`; only a newer run revives it. | COVERED | `ev-raw::test_a_demoted_pointer_keeps_its_ended_and_only_a_newer_run_revives_it` |
+| [`5.13.set-by-hand-ended`](procedo_server_contract.md#rule-5.13.set-by-hand-ended) | 5.13, E6 | E6 gives the pointer the chosen run's `ended`, so a later run that ended after it takes over. | COVERED | `ev-raw::test_a_run_set_by_hand_gives_the_pointer_its_ended` |
+| [`5.13.delete-hands-on`](procedo_server_contract.md#rule-5.13.delete-hands-on) | 5.13, E11 | Deleting the current run hands the pointer to the newest remaining complete run not deleted. | COVERED | `ev:a_deleted_run_is_kept_with_its_reason_until_purged`, `ev:the_mark_is_per_board_and_test_id`, `ev:two_ids_with_one_recorded_name_keep_their_own_runs_and_mark` |
+| [`5.13.handoff-tiebreak`](procedo_server_contract.md#rule-5.13.handoff-tiebreak) | 5.13 | Among those: latest `ended`, then greatest `run_id`. | COVERED | `ev-raw::test_deleting_the_current_run_hands_the_pointer_on_by_ended_then_run_id` |
+| [`5.13.handoff-none`](procedo_server_contract.md#rule-5.13.handoff-none) | 5.13 | None remaining: the test has no pointer; the next complete run becomes current. | COVERED | `ev-raw::test_deleting_the_current_run_hands_the_pointer_on_by_ended_then_run_id` |
+| [`5.14.label`](procedo_server_contract.md#rule-5.14.label) | 5.14, E14 | A Bench's `label` is the station name of the latest request naming one (`station_id`, an entry's `bench`); one naming none leaves it; absent until one does. | COVERED | `ev-raw::test_a_benchs_label_is_the_station_the_latest_request_named` |
+| [`5.14.bench`](procedo_server_contract.md#rule-5.14.bench) | 5.14, E14 | A Bench's `machine_id`, `label`, `first_seen`, `last_seen` from the requests that named it. | COVERED | `ev-raw::test_e14_lists_a_bench_by_the_requests_that_named_it` |
+| [`5.15.storage-fields`](procedo_server_contract.md#rule-5.15.storage-fields) | 5.15 | A Storage's fields; one active storage; `params` strings, never a secret. | COVERED | `pr-raw::test_s1_names_this_server_and_its_storages_without_a_secret` |
+| [`5.16.item-roundtrip`](procedo_server_contract.md#rule-5.16.item-roundtrip) | 5.16 | A LibraryItem reads back with `kind`, `id`, `version`, `content_sha256`, `content_bytes`, `manifest` verbatim, `contains_code`, `published_by`. | COVERED | `pr-raw::test_l1_lists_by_kind_id_and_publication_without_manifests` |
+| [`5.16.contains-code-400`](procedo_server_contract.md#rule-5.16.contains-code-400) | 5.16, L3 | `contains_code: false` for `capability`, `wizard`, `tool`, `package`: `400`. | COVERED | `pr-raw::test_contains_code_false_for_a_kind_that_holds_code_is_400` |
+| [`5.16.code-needs-publisher`](procedo_server_contract.md#rule-5.16.code-needs-publisher) | 5.16, L3 | Only a `publisher` publishes an item with `contains_code: true`; `bench` publishes one without. | COVERED | `pr-raw::test_only_a_publisher_publishes_an_item_holding_code` |
+| [`5.16.created-once`](procedo_server_contract.md#rule-5.16.created-once) | 5.16, L3 | A version is created once: the same content is `already`, other content `409 version_exists`. | COVERED | `pr-raw::test_a_library_version_is_created_once` |
+| [`5.16.case-twin-409`](procedo_server_contract.md#rule-5.16.case-twin-409) | 5.16, L3 | An `<id>@<version>` differing from a held one only by case: `409 exists`. | COVERED | `pr-raw::test_a_library_version_differing_only_by_case_is_409_exists` |
+
+### 6.1–6.2 Rules shared by the calls, and how bytes travel
+
+| Rule id | § | Rule | Status | Kit test(s), or why not |
+|---|---|---|---|---|
+| [`6.1.item-not-held-404`](procedo_server_contract.md#rule-6.1.item-not-held-404) | 6.1 | A call naming one item the server does not hold (E3, E9, P7, P8b, L2) is `404`. | COVERED | `ev:an_empty_storage_reads_back_nothing`, `ev:runs_complete_and_incomplete_read_back_with_their_files`, `http::test_an_item_the_server_does_not_hold_is_404_with_its_signature`, `lib:a_download_over_other_content_is_a_conflict_and_over_the_same_no_download`, `pr:a_release_of_an_id_no_test_holds_is_not_found`, `pr:the_tests_read_back_with_their_format_and_files` |
+| [`6.1.unseen-project-empty`](procedo_server_contract.md#rule-6.1.unseen-project-empty) | 6.1 | A project never seen is an empty one for E2, E4, E5, E8; E3 and E9 answer `404`. | COVERED | `pr-raw::test_a_project_never_seen_reads_as_an_empty_one` |
+| [`6.1.evidence-only-project`](procedo_server_contract.md#rule-6.1.evidence-only-project) | 6.1, P1, P9, P11 | A project known only by its evidence: P1 does not list it, P2–P10 answer `404` (P9 before reading the body), P11 gives it its files, evidence kept. | COVERED | `pr-raw::test_a_project_known_only_by_its_evidence_is_no_project_of_the_project_calls` |
+| [`6.2.request-content-type`](procedo_server_contract.md#rule-6.2.request-content-type) | 6.2 | A request body other than JSON or multipart (B1: octet-stream): `400`. | COVERED | `pr-raw::test_a_body_neither_json_nor_multipart_is_400` |
+| [`6.2.multipart-form`](procedo_server_contract.md#rule-6.2.multipart-form) | 6.2 | First part `json`; file parts named `sha256:<hex>`. | COVERED | `ev:runs_complete_and_incomplete_read_back_with_their_files`, `pr:a_project_created_reads_back_byte_for_byte` |
+| [`6.2.part-boundary`](procedo_server_contract.md#rule-6.2.part-boundary) | 6.2 | A file of exactly 1 MiB rides as a part; over 1 MiB never. | COVERED | `pr-raw::test_a_file_of_exactly_one_mib_rides_as_a_part_both_ways` |
+| [`6.2.two-parts-one-name-400`](procedo_server_contract.md#rule-6.2.two-parts-one-name-400) | 6.2 | Two parts with one name: `400`. | COVERED | `pr-raw::test_two_parts_with_one_name_are_400` |
+| [`6.2.digest-mismatch`](procedo_server_contract.md#rule-6.2.digest-mismatch) | 6.2 | A part whose bytes do not match its name: `422 digest_mismatch`. | COVERED | `pr-raw::test_a_part_whose_bytes_are_not_its_name_is_422_digest_mismatch` |
+| [`6.2.part-size-400`](procedo_server_contract.md#rule-6.2.part-size-400) | 6.2 | A part whose size is not its file's `size`: `400`. | COVERED | `pr-raw::test_a_part_whose_size_is_not_its_files_size_is_400` |
+| [`6.2.unreferenced-part-ignored`](procedo_server_contract.md#rule-6.2.unreferenced-part-ignored) | 6.2 | A part no `api`-stored file names is ignored, not an error. | COVERED | `pr-raw::test_a_part_no_file_names_is_ignored_and_not_kept` |
+| [`6.2.part-over-1mib-400`](procedo_server_contract.md#rule-6.2.part-over-1mib-400) | 6.2 | A part over 1 MiB: `400`, `details.large`, nothing written. | COVERED | `pr-raw::test_a_part_over_one_mib_is_400_with_its_version_and_nothing_written` |
+| [`6.2.answer-multipart`](procedo_server_contract.md#rule-6.2.answer-multipart) | 6.2 | An answer with parts is `multipart/mixed`, the json part first. | COVERED | `pr-raw::test_an_answer_with_parts_is_multipart_mixed_with_the_json_part_first` |
+| [`6.2.answer-no-part-json`](procedo_server_contract.md#rule-6.2.answer-no-part-json) | 6.2 | An answer with no part is plain JSON; the server never reads `Accept`, never answers `406`. | COVERED | `pr-raw::test_an_answer_takes_its_form_from_what_it_sends_never_from_accept` |
+| [`6.2.large-in-answer`](procedo_server_contract.md#rule-6.2.large-in-answer) | 6.2 | An answer lists a file over 1 MiB without its part; the client reads it with B2. | COVERED | `lib:a_version_published_downloads_byte_for_byte_on_another_pc`, `pr:a_project_created_reads_back_byte_for_byte` |
+| [`6.2.small-without-part-missing`](procedo_server_contract.md#rule-6.2.small-without-part-missing) | 6.2 | A file of at most 1 MiB, not in `have`, without its part, is missing (in `missing`). | COVERED | `pr-raw::test_a_damaged_blob_is_missing_and_the_bytes_sent_again_replace_it` |
+| [`6.2.have`](procedo_server_contract.md#rule-6.2.have) | 6.2 | Every read leaves out the parts named in `have`. | COVERED | `pr-raw::test_have_leaves_out_the_parts_the_reader_holds` |
+| [`6.2.read-twins`](procedo_server_contract.md#rule-6.2.read-twins) | 6.2 | The `/read` twins (P2b, P6, P7, P8b, E3, E5, L2) answer exactly as their GETs. | COVERED | `pr-raw::test_each_read_twin_answers_as_its_get` |
+| [`6.2.text-once`](procedo_server_contract.md#rule-6.2.text-once) | 6.2, P3 | A text document comes once: a later P3 does not bring it again. | COVERED | `pr:changes_since_a_token_bring_what_moved_and_nothing_else` |
+| [`6.2.held-blob-reference`](procedo_server_contract.md#rule-6.2.held-blob-reference) | 6.2 | A write may reference, without a part, a blob its project holds. | COVERED | `pr-raw::test_a_write_may_reference_without_its_part_a_blob_its_project_holds` |
+| [`6.2.missing-files-409`](procedo_server_contract.md#rule-6.2.missing-files-409) | 6.2, E1, P9 | A reference to bytes not where it says: `409 missing_files`, `details.missing`, nothing written. | COVERED | `pr-raw::test_a_reference_to_bytes_not_there_is_409_missing_files_and_nothing_written` |
+| [`6.2.blobs-per-project`](procedo_server_contract.md#rule-6.2.blobs-per-project) | 6.2 | A reference to bytes only another project holds is a missing file. | COVERED | `pr-raw::test_bytes_one_project_holds_are_missing_for_another` |
+| [`6.2.damaged-blob`](procedo_server_contract.md#rule-6.2.damaged-blob) | 6.2 | A damaged held blob is a missing file; the part sent again replaces it. | COVERED | `pr-raw::test_a_damaged_blob_is_missing_and_the_bytes_sent_again_replace_it` |
+| [`6.2.unreachable-assumed`](procedo_server_contract.md#rule-6.2.unreachable-assumed) | 6.2 | A reference into a storage the server does not reach is assumed to hold. | COVERED | `pr-raw::test_a_reference_into_a_storage_the_server_does_not_reach_is_assumed_to_hold` |
+| [`6.2.unknown-store-id-400`](procedo_server_contract.md#rule-6.2.unknown-store-id-400) | 6.2, E1 | An unknown `store_id` in a reference: `400`. | COVERED | `pr-raw::test_an_unknown_store_id_in_a_reference_is_400` |
+
+### 6.3 Projects, tests and releases
+
+| Rule id | § | Rule | Status | Kit test(s), or why not |
+|---|---|---|---|---|
+| [`P1.light-with-path`](procedo_server_contract.md#rule-P1.light-with-path) | P1 | Each without `files`, `bundle`, `releases`, with `path`. | COVERED | `pr-raw::test_p1_lists_each_project_light_with_its_path_by_folded_name` |
+| [`P1.list`](procedo_server_contract.md#rule-P1.list) | P1 | P1 lists every project whose files the server keeps. | COVERED | `pr:a_project_created_reads_back_byte_for_byte` |
+| [`P1.order`](procedo_server_contract.md#rule-P1.order) | P1 | Ordered by name, case folded. | COVERED | `pr-raw::test_p1_lists_each_project_light_with_its_path_by_folded_name` |
+| [`P2.whole`](procedo_server_contract.md#rule-P2.whole) | P2 | One request opens a project: files, bundle, releases with documents, token, parts. | COVERED | `pr:a_deleted_tests_releases_stay_under_its_id` |
+| [`P3.changes`](procedo_server_contract.md#rule-P3.changes) | P3 | `files` changed, `deleted`, `bundle` only when changed, each text once. | COVERED | `pr:a_deleted_tests_releases_stay_under_its_id`, `pr:changes_since_a_token_bring_what_moved_and_nothing_else` |
+| [`P3.releases-changed`](procedo_server_contract.md#rule-P3.releases-changed) | P3 | `releases`: each test id whose releases changed, with its whole list and documents. | COVERED | `pr-raw::test_p3_brings_each_release_made_since_its_token_and_the_token_moves` |
+| [`P3.rename-no-release`](procedo_server_contract.md#rule-P3.rename-no-release) | P3 | A rename changes no release. | COVERED | `pr:a_rename_keeps_its_releases` |
+| [`P3.token-moves`](procedo_server_contract.md#rule-P3.token-moves) | P3 | The token moves with every change of files, bundle or releases. | COVERED | `pr-raw::test_p3_brings_each_release_made_since_its_token_and_the_token_moves` |
+| [`P3.gone`](procedo_server_contract.md#rule-P3.gone) | P3 | A token the server cannot answer from: `410 gone`. | COVERED | `pr:a_token_the_storage_cannot_answer_from_is_gone` |
+| [`P3.empty-since-400`](procedo_server_contract.md#rule-P3.empty-since-400) | P3 | An empty `since`: `400`. | COVERED | `pr-raw::test_an_empty_since_is_400` |
+| [`P4.tests`](procedo_server_contract.md#rule-P4.tests) | P4 | Each test with `test`, `test_id`, `format`, `latest_release`, without files. | COVERED | `pr-raw::test_p4_lists_each_test_with_its_id_format_and_release_without_files` |
+| [`P5.keyed-as-asked`](procedo_server_contract.md#rule-P5.keyed-as-asked) | P5 | `tests` keyed by each name as asked; the Test gives the stored spelling. | COVERED | `pr:the_tests_read_back_with_their_format_and_files` |
+| [`P5.missing`](procedo_server_contract.md#rule-P5.missing) | P5 | `missing` lists the names that are no test, as asked. | COVERED | `pr-raw::test_p5_and_p6_key_the_tests_as_asked_and_list_the_missing_as_asked` |
+| [`P7.one-test`](procedo_server_contract.md#rule-P7.one-test) | P7 | One Test with its files; a test not held: `404`. | COVERED | `pr:a_rename_keeps_its_releases` |
+| [`P8.list`](procedo_server_contract.md#rule-P8.list) | P8 | Every release of the id, oldest first, without documents; `[]` for none; a deleted test's included. | COVERED | `pr:a_rename_keeps_its_releases` |
+| [`P8b.one-release`](procedo_server_contract.md#rule-P8b.one-release) | P8b | One Release with documents; a version not held: `404`. | COVERED | `pr:a_release_reads_back_with_its_documents` |
+| [`P9.shapes`](procedo_server_contract.md#rule-P9.shapes) | P9 | Write text, write a stored file, delete, move a folder, a new bundle. | COVERED | `pr:a_rename_keeps_its_releases` |
+| [`P9.results`](procedo_server_contract.md#rule-P9.results) | P9 | One result per change, in order; `saved` with the new `version`. | COVERED | `pr:a_change_leaving_a_test_without_a_valid_test_id_is_refused_alone`, `pr:changes_since_a_token_bring_what_moved_and_nothing_else` |
+| [`P9.changed`](procedo_server_contract.md#rule-P9.changed) | P9 | `changed`: nothing written for the path, `current` what the server holds (absent when none); the other changes apply. | COVERED | `pr-raw::test_a_write_over_a_file_the_server_does_not_hold_is_changed_without_current` |
+| [`P9.replay`](procedo_server_contract.md#rule-P9.replay) | P9 | A replay of a change already satisfied is `saved`, writes nothing, whatever `replaces` says. | COVERED | `pr-raw::test_a_move_already_made_is_a_replay_writing_nothing` |
+| [`P9.replay-no-token`](procedo_server_contract.md#rule-P9.replay-no-token) | P9, P3 | A request sent again whose every change is satisfied moves no token: its answer's token is the one held before, and P3 from it brings nothing. | COVERED | `pr-raw::test_a_request_sent_again_moves_no_token_and_p3_brings_nothing` |
+| [`P9.malformed-400`](procedo_server_contract.md#rule-P9.malformed-400) | P9 | A malformed change (bad path, wrong form, part over 1 MiB) refuses the whole request, `400`. | COVERED | `pr-raw::test_a_malformed_change_refuses_the_whole_request` |
+| [`P9.missing-files-409`](procedo_server_contract.md#rule-P9.missing-files-409) | P9 | A change whose bytes are not where it says: `409 missing_files` for the whole request. | COVERED | `pr-raw::test_a_reference_to_bytes_not_there_is_409_missing_files_and_nothing_written` |
+| [`P9.move-conflict`](procedo_server_contract.md#rule-P9.move-conflict) | P9 | A move when the folder holds other files or the destination any: `changed`, nothing moved, no `current`. | COVERED | `pr-raw::test_a_move_meeting_other_files_is_changed_and_moves_nothing` |
+| [`P9.move-refused`](procedo_server_contract.md#rule-P9.move-refused) | P9 | A move into itself, or one changing a file's form or making a never-travel path: `refused`. | COVERED | `pr-raw::test_a_move_into_itself_or_changing_a_files_form_or_never_travelling_is_refused` |
+| [`P9.rename-carries`](procedo_server_contract.md#rule-P9.rename-carries) | P9 | A test renamed keeps its `test.json` (so its id) and its draft. | COVERED | `pr-raw::test_a_renamed_test_keeps_its_id_and_its_draft` |
+| [`P9.last-file-deletes-test`](procedo_server_contract.md#rule-P9.last-file-deletes-test) | P9 | A test whose last file is removed is deleted; its releases, runs and marks stay. | COVERED | `pr:a_deleted_tests_releases_stay_under_its_id` |
+| [`P10.only-named-files`](procedo_server_contract.md#rule-P10.only-named-files) | P10 | Only the files named are checked and kept. | COVERED | `pr:a_release_reads_back_with_its_documents` |
+| [`P10.body-test-id-ignored`](procedo_server_contract.md#rule-P10.body-test-id-ignored) | P10 | A `test_id` in the body is ignored. | COVERED | `pr-raw::test_p10_releases_the_paths_id_whatever_the_body_says_and_answers_light` |
+| [`P10.not-found`](procedo_server_contract.md#rule-P10.not-found) | P10 | No test holds the id: `404`. | COVERED | `pr:a_release_of_an_id_no_test_holds_is_not_found` |
+| [`P10.changed`](procedo_server_contract.md#rule-P10.changed) | P10 | A named version no longer held: `409 changed`. | COVERED | `pr:a_release_reads_back_with_its_documents` |
+| [`P10.same-as-release`](procedo_server_contract.md#rule-P10.same-as-release) | P10 | `content` equal to a release's under the id: `409 same_as_release`. | COVERED | `pr:a_release_reads_back_with_its_documents`, `pr:a_rename_keeps_its_releases` |
+| [`P10.two-files-one-name-400`](procedo_server_contract.md#rule-P10.two-files-one-name-400) | P10 | Two files taking one name: `400`. | COVERED | `pr-raw::test_p10_refuses_two_files_taking_one_document_name` |
+| [`P10.number-and-name`](procedo_server_contract.md#rule-P10.number-and-name) | P10 | Next number under the id; the release takes the test's current name. | COVERED | `pr:a_rename_keeps_its_releases` |
+| [`P10.answer-light`](procedo_server_contract.md#rule-P10.answer-light) | P10 | The answer is the new Release without documents. | COVERED | `pr-raw::test_p10_releases_the_paths_id_whatever_the_body_says_and_answers_light` |
+| [`P11.create`](procedo_server_contract.md#rule-P11.create) | P11 | P11 creates the project; the answer is the whole Project. | COVERED | `pr:a_project_created_reads_back_byte_for_byte` |
+| [`P11.exists`](procedo_server_contract.md#rule-P11.exists) | P11 | A held `project_id` or name: `409 exists`. | COVERED | `pr:creating_it_again_is_a_replay_and_another_under_its_id_or_name_is_refused` |
+| [`P11.replay`](procedo_server_contract.md#rule-P11.replay) | P11 | The same request again is a replay, answered with the Project. | COVERED | `pr:creating_it_again_is_a_replay_and_another_under_its_id_or_name_is_refused` |
+| [`P11.drafts`](procedo_server_contract.md#rule-P11.drafts) | P11 | Drafts as P9's. | COVERED | `pr-raw::test_p11_keeps_the_drafts_as_p9_does` |
+
+### 6.4 Evidence
+
+| Rule id | § | Rule | Status | Kit test(s), or why not |
+|---|---|---|---|---|
+| [`E1.creates-project-board`](procedo_server_contract.md#rule-E1.creates-project-board) | E1 | A push creates the project and the board when new. | COVERED | `ev:runs_complete_and_incomplete_read_back_with_their_files` |
+| [`E1.project-name`](procedo_server_contract.md#rule-E1.project-name) | E1 | `project_name` names a project the push creates. | UNTESTABLE | No call answers the name of a project known only by its evidence: P1 leaves it out, P2 answers 404 (6.1), and the evidence calls name the project by its project_id. |
+| [`E1.push`](procedo_server_contract.md#rule-E1.push) | E1 | A run is stored and reads back. | COVERED | `ev:runs_complete_and_incomplete_read_back_with_their_files` |
+| [`E1.replay`](procedo_server_contract.md#rule-E1.replay) | E1 | The same JSON again is `already`; a deleted run stays deleted. | COVERED | `ev:a_deleted_run_stays_deleted_and_a_purged_one_never_comes_back` |
+| [`E1.run-conflict`](procedo_server_contract.md#rule-E1.run-conflict) | E1 | Other JSON under a held `run_id`: `409 run_conflict`, kind `corrupt`. | COVERED | `ev-raw::test_other_json_under_a_held_run_id_is_a_conflict` |
+| [`E1.purged-409`](procedo_server_contract.md#rule-E1.purged-409) | E1, E13 | A purged `run_id`: `409 deleted`. | COVERED | `ev:a_deleted_run_stays_deleted_and_a_purged_one_never_comes_back` |
+| [`E1.project-id-match`](procedo_server_contract.md#rule-E1.project-id-match) | E1, 5.5 | A body `project_id` must equal the path's. | COVERED | `ev-raw::test_a_run_naming_another_project_is_refused` |
+| [`E1.answer`](procedo_server_contract.md#rule-E1.answer) | E1 | `status`, the board in its stored spelling (none for format 1), `test_id`, `current`, `pushed_at`. | COVERED | `ev-raw::test_a_format_1_run_belongs_to_the_no_part_number_board`, `ev-raw::test_the_push_answer_names_the_board_as_first_stored_and_whether_the_run_is_current` |
+| [`E2.filters`](procedo_server_contract.md#rule-E2.filters) | E2 | `serial`, `operator`, `machine_id`, `firmware_version`, `test_id`, `test`, `part_number`, `board_revision`, `lot`, `field`/`field_value`, `verdict`, `test_version`, `definition_sha256`, `draft`, `from`/`to`, `measurement`/`value_min`/`value_max`, `deleted` include/exclude; each compared as stated. | COVERED | `ev-raw::test_a_format_1_run_belongs_to_the_no_part_number_board`, `ev-raw::test_e2_each_filter_finds_exactly_its_runs_newest_first` |
+| [`E2.across-projects`](procedo_server_contract.md#rule-E2.across-projects) | E2 | Without `project_id`, every project the login may read. | COVERED | `ev-raw::test_e2_without_a_project_searches_every_project_by_run_id_then_project_id` |
+| [`E2.bound-without-measurement-400`](procedo_server_contract.md#rule-E2.bound-without-measurement-400) | E2 | A bound without `measurement`: `400`. | COVERED | `ev-raw::test_e2_each_filter_finds_exactly_its_runs_newest_first` |
+| [`E2.deleted-only`](procedo_server_contract.md#rule-E2.deleted-only) | E2 | `deleted=only` lists the deleted runs with their `deleted_*`. | COVERED | `ev:a_deleted_run_is_kept_with_its_reason_until_purged` |
+| [`E2.limit-cursor`](procedo_server_contract.md#rule-E2.limit-cursor) | E2 | `limit` 100 by default, ceiling never below 500; `cursor` pages, `null` when complete. | COVERED | `ev-raw::test_e2_pages_501_runs_to_completion` |
+| [`E2.order`](procedo_server_contract.md#rule-E2.order) | E2 | Newest first by `run_id`, then `project_id`. | COVERED | `ev-raw::test_e2_without_a_project_searches_every_project_by_run_id_then_project_id` |
+| [`E3.run`](procedo_server_contract.md#rule-E3.run) | E3 | One run with its files as parts, `annotation`, `deleted_*`. | COVERED | `ev:runs_complete_and_incomplete_read_back_with_their_files` |
+| [`E3.deleted-answers`](procedo_server_contract.md#rule-E3.deleted-answers) | E3 | A deleted run still answers. | COVERED | `ev:a_deleted_run_is_kept_with_its_reason_until_purged` |
+| [`E4.list`](procedo_server_contract.md#rule-E4.list) | E4 | The project's boards. | COVERED | `ev:board_entries_read_back_in_the_order_received` |
+| [`E4.filters`](procedo_server_contract.md#rule-E4.filters) | E4 | `part_number`, `board_revision`: absent any, empty none. | COVERED | `ev-raw::test_e4_filters_and_orders_the_boards_by_case_folding` |
+| [`E4.order`](procedo_server_contract.md#rule-E4.order) | E4 | Part number, revision, serial, by case folding, "none" first. | COVERED | `ev-raw::test_e4_filters_and_orders_the_boards_by_case_folding` |
+| [`E5.board`](procedo_server_contract.md#rule-E5.board) | E5 | The board's results and entries; one the server does not know is empty. | COVERED | `ev:an_empty_storage_reads_back_nothing`, `ev:board_entries_read_back_in_the_order_received` |
+| [`E5.addressing-400`](procedo_server_contract.md#rule-E5.addressing-400) | E5, E6, E9, E15 | `serial`, `part_number`, `board_revision` all required; one missing: `400`. | COVERED | `ev-raw::test_a_call_naming_a_board_needs_its_three_parts` |
+| [`E6.set-clear`](procedo_server_contract.md#rule-E6.set-clear) | E6 | Set or clear the current run. | COVERED | `ev:the_current_run_is_set_and_cleared`, `ev:the_mark_is_per_board_and_test_id` |
+| [`E6.not-its-run-404`](procedo_server_contract.md#rule-E6.not-its-run-404) | E6 | A run not of this project, board, test id, or deleted: `404`. | COVERED | `ev-raw::test_e6_refuses_a_deleted_an_unknown_or_an_incomplete_run` |
+| [`E6.incomplete-400`](procedo_server_contract.md#rule-E6.incomplete-400) | E6 | An incomplete run: `400`. | COVERED | `ev-raw::test_e6_refuses_a_deleted_an_unknown_or_an_incomplete_run` |
+| [`E6.changed`](procedo_server_contract.md#rule-E6.changed) | E6 | `replaces` not the pointer: `changed`, nothing written, the pointer now. | COVERED | `ev-raw::test_e6_answers_changed_over_a_moved_pointer_and_saved_to_a_replay` |
+| [`E6.replay`](procedo_server_contract.md#rule-E6.replay) | E6 | A request the pointer already satisfies is `saved` whatever `replaces` says. | COVERED | `ev-raw::test_a_demoted_pointer_keeps_its_ended_and_only_a_newer_run_revives_it`, `ev-raw::test_e6_answers_changed_over_a_moved_pointer_and_saved_to_a_replay` |
+| [`E6.no-pointer-yet`](procedo_server_contract.md#rule-E6.no-pointer-yet) | E6 | No pointer: `replaces: null` matches; another `replaces` is `changed` with `{test_id, run_id: null}`. | COVERED | `ev-raw::test_e6_with_no_pointer_yet_takes_only_replaces_null` |
+| [`E6.clear-no-pointer`](procedo_server_contract.md#rule-E6.clear-no-pointer) | E6 | A clear with no pointer is `saved`, pointer `{test_id, run_id: null}`, nothing written, whatever `replaces` says. | COVERED | `ev-raw::test_e6_clearing_with_no_pointer_is_saved_whatever_replaces_says` |
+| [`E7.statuses`](procedo_server_contract.md#rule-E7.statuses) | E7 | `saved`, `changed` (kept, not current, with the current entry), `already`. | COVERED | `ev:annotation_entries_read_back_in_the_order_received` |
+| [`E7.deleted-run-409`](procedo_server_contract.md#rule-E7.deleted-run-409) | E7 | A deleted run takes no entry: `409 deleted`; its entries come back on a restore. | COVERED | `ev:a_deleted_run_stays_deleted_and_a_purged_one_never_comes_back` |
+| [`E7.override-value-400`](procedo_server_contract.md#rule-E7.override-value-400) | E7, 5.9 | An override value outside the six verdicts: `400`. | COVERED | `ev-raw::test_an_override_outside_the_six_verdicts_is_refused` |
+| [`E8.filters`](procedo_server_contract.md#rule-E8.filters) | E8 | `kind`, `serial` (empty: exports), parts, `work_order`, `test`, `deleted`. | COVERED | `ev-raw::test_e8_orders_filters_and_pages_the_artifacts` |
+| [`E8.verdict`](procedo_server_contract.md#rule-E8.verdict) | E8 | `verdict`: one or more, comma-separated, compared exactly, as E2's. | COVERED | `ev-raw::test_e8_keeps_the_verdicts_asked` |
+| [`E8.from-to`](procedo_server_contract.md#rule-E8.from-to) | E8 | `from`, `to` keep the artifacts whose `generated` is within them; one with no `generated` never matches. | COVERED | `ev-raw::test_e8_keeps_generated_within_from_inclusive_to_exclusive` |
+| [`E8.from-to-bounds`](procedo_server_contract.md#rule-E8.from-to-bounds) | E8 | `from` inclusive, `to` exclusive: `[from, to)`, as E2's. | COVERED | `ev-raw::test_e8_keeps_generated_within_from_inclusive_to_exclusive` |
+| [`E8.generations`](procedo_server_contract.md#rule-E8.generations) | E8 | `latest` by default; `all` every generation, each a row in E8's order. | COVERED | `ev:reports_and_exports_keep_every_generation` |
+| [`E8.include-info`](procedo_server_contract.md#rule-E8.include-info) | E8 | `include=info` keeps each row's `info`. | COVERED | `ev:reports_and_exports_keep_every_generation` |
+| [`E8.limit-cursor`](procedo_server_contract.md#rule-E8.limit-cursor) | E8 | As E2's. | COVERED | `ev-raw::test_e8_pages_501_artifacts_to_completion` |
+| [`E8.light`](procedo_server_contract.md#rule-E8.light) | E8 | Rows without `info` (unless asked) and never a draft's `content`. | COVERED | `ev-raw::test_an_artifacts_fields_and_records_read_back_as_pushed`, `ev-raw::test_e8_orders_filters_and_pages_the_artifacts` |
+| [`E8.order`](procedo_server_contract.md#rule-E8.order) | E8 | Newest first by `generated`; no `generated` after every time. | COVERED | `ev-raw::test_e8_lists_newest_first_by_generated_and_pages_in_that_order` |
+| [`E8.order-ties`](procedo_server_contract.md#rule-E8.order-ties) | E8 | Equal times by kind, serial, part number, revision, name (case folded, "none" first), then generation newest first. | COVERED | `ev-raw::test_e8_lists_newest_first_by_generated_and_pages_in_that_order`, `ev-raw::test_e8_orders_filters_and_pages_the_artifacts` |
+| [`E9.generation`](procedo_server_contract.md#rule-E9.generation) | E9 | The newest generation, or generation `n`; one not held: `404`. | COVERED | `ev:reports_and_exports_keep_every_generation` |
+| [`E9.draft-generation-404`](procedo_server_contract.md#rule-E9.draft-generation-404) | E9 | `generation` on a draft: `404`. | COVERED | `ev-raw::test_a_drafts_generation_is_not_found` |
+| [`E10.report-already`](procedo_server_contract.md#rule-E10.report-already) | E10 | A report or export equal to the newest (same `sha256` and `info`): `already`. | COVERED | `ev:reports_and_exports_keep_every_generation` |
+| [`E10.report-new-generation`](procedo_server_contract.md#rule-E10.report-new-generation) | E10 | Other bytes: the next generation. | COVERED | `ev:reports_and_exports_keep_every_generation` |
+| [`E10.info-only-new-generation`](procedo_server_contract.md#rule-E10.info-only-new-generation) | E10 | The same file with a changed `info`: the next generation. | COVERED | `ev-raw::test_the_same_file_with_another_info_is_the_next_generation` |
+| [`E10.draft`](procedo_server_contract.md#rule-E10.draft) | E10 | A draft: replaced over the version held, `already` when equal, `saved` with none held, `changed` over another. | COVERED | `ev:a_draft_is_replaced_only_when_unchanged_since_it_was_read` |
+| [`E10.deleted-name`](procedo_server_contract.md#rule-E10.deleted-name) | E10 | A name a manager deleted: `409 deleted`, but the push equal to its newest generation is `already` and it stays deleted. | COVERED | `ev:a_deleted_artifacts_name_takes_only_its_own_replay` |
+| [`E11.reason-400`](procedo_server_contract.md#rule-E11.reason-400) | E11 | `reason` absent or blank: `400`. | COVERED | `ev-raw::test_a_delete_without_its_reason_is_refused` |
+| [`E11.never-empty-strings`](procedo_server_contract.md#rule-E11.never-empty-strings) | E11, E12 | `station` or `deleted_by_name` `""`: `400 bad_request`, nothing deleted. | COVERED | `ev-raw::test_a_delete_with_an_empty_station_or_name_is_400_and_deletes_nothing` |
+| [`E11.delete`](procedo_server_contract.md#rule-E11.delete) | E11 | A delete hides the run from lists, keeps it readable with `deleted_*`, hands the pointer on. | COVERED | `ev:a_deleted_run_is_kept_with_its_reason_until_purged` |
+| [`E11.restore`](procedo_server_contract.md#rule-E11.restore) | E11 | A restore puts it back; one current when deleted is current again by the pointer rule. | COVERED | `ev:a_deleted_run_is_kept_with_its_reason_until_purged` |
+| [`E11.restore-stays-history`](procedo_server_contract.md#rule-E11.restore-stays-history) | E11 | A restored run a newer one replaced stays in the history. | COVERED | `ev-raw::test_a_restored_run_a_newer_one_replaced_stays_in_the_history` |
+| [`E11.replays`](procedo_server_contract.md#rule-E11.replays) | E11 | Deleting a deleted run or restoring a live one: `200`, nothing changed, the first reason kept, no `pointer`. | COVERED | `ev:a_deleted_run_is_kept_with_its_reason_until_purged` |
+| [`E11.answer-pointer`](procedo_server_contract.md#rule-E11.answer-pointer) | E11 | `pointer`: the one handed to (or `null`) after a delete; after a restore that made it current. | COVERED | `ev-raw::test_a_restored_run_a_newer_one_replaced_stays_in_the_history`, `ev-raw::test_deleting_the_current_run_hands_the_pointer_on_by_ended_then_run_id`, `ev-raw::test_e6_with_no_pointer_yet_takes_only_replaces_null` |
+| [`E12.every-generation`](procedo_server_contract.md#rule-E12.every-generation) | E12 | A delete covers every generation; a restore brings them all back. | COVERED | `ev:a_deleted_artifact_goes_with_its_generations_and_comes_back` |
+| [`E12.replays`](procedo_server_contract.md#rule-E12.replays) | E12 | Replays as E11. | COVERED | `ev-raw::test_e12_replays_change_nothing` |
+| [`E12.acts-on-name`](procedo_server_contract.md#rule-E12.acts-on-name) | E12 | Delete and restore act on the name: a `generation` sent is ignored; the answer is the newest generation, with `deleted_*` after a delete. | COVERED | `ev-raw::test_e12_acts_on_the_name_and_answers_its_newest_generation` |
+| [`E13.not-expired-kept`](procedo_server_contract.md#rule-E13.not-expired-kept) | E13 | A purge removes nothing deleted less than the retention period ago. | COVERED | `ev:a_deleted_run_is_kept_with_its_reason_until_purged` |
+| [`E13.expired-purged`](procedo_server_contract.md#rule-E13.expired-purged) | E13 | What was deleted longer ago than the retention period goes, by the server's clock. | COVERED | `ev-raw::test_e13_purges_what_was_deleted_strictly_longer_ago_than_the_retention` |
+| [`E13.items`](procedo_server_contract.md#rule-E13.items) | E13 | `items` purges those now; one no longer held is skipped; one not deleted refuses the whole request (`400`), nothing purged. | COVERED | `ev:a_deleted_run_is_kept_with_its_reason_until_purged` |
+| [`E13.run-id-kept`](procedo_server_contract.md#rule-E13.run-id-kept) | E13 | A purged run's `run_id` is kept: a later push is `409 deleted`. | COVERED | `ev:a_deleted_run_stays_deleted_and_a_purged_one_never_comes_back` |
+| [`E13.pointer-of-purged`](procedo_server_contract.md#rule-E13.pointer-of-purged) | E13 | A purge of a run a pointer names hands the pointer on. | COVERED | `ev-raw::test_e13_purging_a_run_a_pointer_still_names_hands_the_pointer_on` |
+| [`E13.counts-to-delete`](procedo_server_contract.md#rule-E13.counts-to-delete) | E13 | `runs`, `artifacts` counts; `to_delete` by `store_id`. | COVERED | `ev-raw::test_e13_counts_what_went_and_lists_the_declared_storages_blobs` |
+| [`E13.purged-list`](procedo_server_contract.md#rule-E13.purged-list) | E13 | `purged` lists what went, artifacts by kind, board as stored, name. | COVERED | `ev:a_deleted_artifacts_name_takes_only_its_own_replay` |
+| [`E13.to-delete-scope`](procedo_server_contract.md#rule-E13.to-delete-scope) | E13, 7.3 | `to_delete` is what S3 lists for the project now, in each declared storage: blobs a P9 change left too, not only this purge's, none S4 settled. | COVERED | `pr-raw::test_s3_and_s4_settle_the_blobs_nothing_references_in_a_declared_storage` |
+| [`E13.to-delete-absent`](procedo_server_contract.md#rule-E13.to-delete-absent) | E13 | `to_delete` is absent when there is none; a storage with none is not a key. | COVERED | `pr-raw::test_e13_leaves_to_delete_out_when_there_is_none` |
+| [`E14.benches`](procedo_server_contract.md#rule-E14.benches) | E14 | `{"benches": [Bench]}`. | COVERED | `ev-raw::test_e14_lists_a_bench_by_the_requests_that_named_it` |
+| [`E15.statuses`](procedo_server_contract.md#rule-E15.statuses) | E15 | Works as E7: `saved`, `changed`, `already`. | COVERED | `ev:board_entries_read_back_in_the_order_received` |
+| [`E15.creates-board`](procedo_server_contract.md#rule-E15.creates-board) | E15 | The first entry creates the board. | COVERED | `ev:board_entries_read_back_in_the_order_received` |
+| [`E16.operators`](procedo_server_contract.md#rule-E16.operators) | E16 | Every operator the project's runs recorded, once per case folding, in the spelling first received; none for a run without one; `[]` for a project never seen. | COVERED | `ev-raw::test_e16_lists_each_operator_once_deleted_runs_included_by_case_folding` |
+| [`E16.deleted-included`](procedo_server_contract.md#rule-E16.deleted-included) | E16 | A deleted run's operator is listed. | COVERED | `ev-raw::test_e16_lists_each_operator_once_deleted_runs_included_by_case_folding` |
+| [`E16.order`](procedo_server_contract.md#rule-E16.order) | E16 | Ascending by case folding. | COVERED | `ev-raw::test_e16_lists_each_operator_once_deleted_runs_included_by_case_folding` |
+| [`E17.readings`](procedo_server_contract.md#rule-E17.readings) | E17 | Every measurement name the runs recording that test name (by case folding) recorded, once per case folding, in the spelling first received; another test's none; `[]` for a project never seen. | COVERED | `ev-raw::test_e17_lists_a_tests_readings_once_with_their_units_deleted_runs_included` |
+| [`E17.units`](procedo_server_contract.md#rule-E17.units) | E17 | Each reading's `units`: the first received under its name that carries one; absent when none does. | COVERED | `ev-raw::test_e17_lists_a_tests_readings_once_with_their_units_deleted_runs_included` |
+| [`E17.deleted-included`](procedo_server_contract.md#rule-E17.deleted-included) | E17 | A deleted run's readings are listed. | COVERED | `ev-raw::test_e17_lists_a_tests_readings_once_with_their_units_deleted_runs_included` |
+| [`E17.order`](procedo_server_contract.md#rule-E17.order) | E17 | Ascending by the name's case folding. | COVERED | `ev-raw::test_e17_lists_a_tests_readings_once_with_their_units_deleted_runs_included` |
+| [`E17.test-required`](procedo_server_contract.md#rule-E17.test-required) | E17, 2.13 | `test` missing or empty is `400 bad_request`, a fault of the request's form. | COVERED | `ev-raw::test_e17_names_its_test_or_is_refused` |
+| [`E1.large-file`](procedo_server_contract.md#rule-E1.large-file) | E1, 6.6 | A run file over 1 MiB goes alone first (B1) and the push references it. | COVERED | `ev-raw::test_a_run_file_over_one_mib_goes_alone_first_and_one_of_exactly_one_mib_as_a_part` |
+
+### 6.5 The library, 6.6 storages and large files
+
+| Rule id | § | Rule | Status | Kit test(s), or why not |
+|---|---|---|---|---|
+| [`L1.list`](procedo_server_contract.md#rule-L1.list) | L1 | Every version of the kind asked. | COVERED | `lib:a_version_published_downloads_byte_for_byte_on_another_pc` |
+| [`L1.light`](procedo_server_contract.md#rule-L1.light) | L1 | Items without `manifest`. | COVERED | `pr-raw::test_l1_lists_by_kind_id_and_publication_without_manifests` |
+| [`L1.order`](procedo_server_contract.md#rule-L1.order) | L1 | Kind, id by code point, publication oldest first. | COVERED | `pr-raw::test_l1_lists_by_kind_id_and_publication_without_manifests` |
+| [`L1.kind-order`](procedo_server_contract.md#rule-L1.kind-order) | L1 | The kinds go by their names' code points (`bundle`, `capability`, `config`, …), not by 5.16's table. | COVERED | `pr-raw::test_l1_orders_the_kinds_by_their_names_not_by_the_table` |
+| [`L1.kind-400`](procedo_server_contract.md#rule-L1.kind-400) | L1 | A `kind` that is none of 5.16's: `400`. | COVERED | `pr-raw::test_l1_refuses_a_kind_that_is_none` |
+| [`L2.item`](procedo_server_contract.md#rule-L2.item) | L2 | One item with its manifest and its archive (part, or B2 over 1 MiB); not held: `404`. | COVERED | `lib:a_download_over_other_content_is_a_conflict_and_over_the_same_no_download` |
+| [`L3.publish`](procedo_server_contract.md#rule-L3.publish) | L3 | Publish one version, its archive alone first when over 1 MiB (owner `library`). | COVERED | `lib:a_version_published_downloads_byte_for_byte_on_another_pc` |
+| [`S1.storages`](procedo_server_contract.md#rule-S1.storages) | S1 | `{instance_id, storages}`; the client finds the active storage there. | COVERED | `pr-raw::test_s1_names_this_server_and_its_storages_without_a_secret` |
+| [`B1.upload`](procedo_server_contract.md#rule-B1.upload) | B1 | Upload one file; `saved` with its version and size. | COVERED | `pr:a_project_created_reads_back_byte_for_byte` |
+| [`B1.content-type-400`](procedo_server_contract.md#rule-B1.content-type-400) | B1 | Another `Content-Type` than octet-stream: `400`. | COVERED | `pr-raw::test_b1_and_b2_refuse_what_is_not_one_file_in_the_api_storage` |
+| [`B1.owner-before-project`](procedo_server_contract.md#rule-B1.owner-before-project) | B1 | B1 for a `project_id` the server holds nothing for is `saved`; the JSON that follows (P11, E1) finds the bytes held, B2 reads them. | COVERED | `pr-raw::test_b1_takes_a_file_for_a_project_not_held_yet_and_the_json_after_finds_it` |
+| [`B1.bare-sha-400`](procedo_server_contract.md#rule-B1.bare-sha-400) | B1, B2 | A `sha256:` prefix in the path: `400`. | COVERED | `pr-raw::test_b1_and_b2_refuse_what_is_not_one_file_in_the_api_storage` |
+| [`B1.api-storage-only`](procedo_server_contract.md#rule-B1.api-storage-only) | B1, B2 | Another backend: `400`; an unknown `store_id`: `404`. | COVERED | `pr-raw::test_b1_and_b2_refuse_what_is_not_one_file_in_the_api_storage` |
+| [`B1.roles-403`](procedo_server_contract.md#rule-B1.roles-403) | B1 | `bench`/`importer` for a project, `bench`/`publisher` for `library`; another login: `403`. | COVERED | `pr-raw::test_b1_takes_a_projects_bytes_from_bench_or_importer_and_the_librarys_from_bench` |
+| [`B1.max-file-413`](procedo_server_contract.md#rule-B1.max-file-413) | B1 | Over `max_file_bytes`: `413`, `details.max_file_bytes`, before the body; never held to `max_upload_bytes`. | COVERED | `pr-raw::test_a_body_over_its_limit_is_413_before_it_is_sent`, `pr-raw::test_b1_is_held_to_max_file_bytes_never_to_max_upload_bytes` |
+| [`B1.digest-422`](procedo_server_contract.md#rule-B1.digest-422) | B1 | A body whose hash is not the path's: `422 digest_mismatch`. | COVERED | `pr-raw::test_b1_and_b2_refuse_what_is_not_one_file_in_the_api_storage` |
+| [`B1.kept-24h`](procedo_server_contract.md#rule-B1.kept-24h) | B1 | An upload nothing references is kept at least 24 hours. | HAND | Needs a day (README hand check 11). |
+| [`B1.already`](procedo_server_contract.md#rule-B1.already) | B1 | `already` when the owner holds the bytes whole; a damaged copy is replaced. | COVERED | `pr-raw::test_a_damaged_blob_is_missing_and_the_bytes_sent_again_replace_it`, `pr-raw::test_b1_saves_bytes_once_then_answers_already` |
+| [`B2.download`](procedo_server_contract.md#rule-B2.download) | B2 | The bytes, `application/octet-stream`. | COVERED | `lib:a_version_published_downloads_byte_for_byte_on_another_pc`, `pr:a_project_created_reads_back_byte_for_byte` |
+| [`B2.range`](procedo_server_contract.md#rule-B2.range) | B2, 3.6 | `Accept-Ranges: bytes`; one range `206` with `Content-Range`; past the end `416` with `bytes */<size>`; several ranges or one not read: `200`. | COVERED | `pr-raw::test_b2_answers_one_range_206_and_past_the_end_416` |
+| [`B2.owner-404`](procedo_server_contract.md#rule-B2.owner-404) | B2 | Bytes the owner does not hold (another project's included): `404`. | COVERED | `pr-raw::test_bytes_one_project_holds_are_missing_for_another` |
+| [`B2.any-size`](procedo_server_contract.md#rule-B2.any-size) | B2 | B2 answers any file the owner holds, one of at most 1 MiB too. | COVERED | `pr-raw::test_b2_answers_a_file_of_at_most_one_mib_too` |
+| [`S2.declare`](procedo_server_contract.md#rule-S2.declare) | S2 | Declare a project's storage; `already` for a declared `identity`, its first `params` and `store_id`; answer `declared: true`, `active: false`, `reachable`. | COVERED | `pr-raw::test_s2_declares_a_storage_once_by_its_exact_identity` |
+| [`S2.params-strings-400`](procedo_server_contract.md#rule-S2.params-strings-400) | S2 | A non-string `params` value: `400`. | COVERED | `pr-raw::test_s2_refuses_params_that_are_not_strings_or_name_a_secret` |
+| [`S2.secret-key-400`](procedo_server_contract.md#rule-S2.secret-key-400) | S2 | A key named for a secret (case folded): `400`. | COVERED | `pr-raw::test_s2_refuses_params_that_are_not_strings_or_name_a_secret` |
+| [`S2.reachable-as-found`](procedo_server_contract.md#rule-S2.reachable-as-found) | S2, 5.15 | `reachable` is what the server found when declaring: a host that does not resolve (`.invalid`) is `false`, and S2 still answers `saved`. | COVERED | `pr-raw::test_s2_declares_a_storage_it_cannot_open_and_says_it_does_not_reach_it` |
+| [`S3.to-delete`](procedo_server_contract.md#rule-S3.to-delete) | S3 | The declared storage's blobs nothing references, by project. | COVERED | `pr-raw::test_s3_and_s4_settle_the_blobs_nothing_references_in_a_declared_storage` |
+| [`S4.deleted`](procedo_server_contract.md#rule-S4.deleted) | S4 | `delete`, `keep` (referenced since, or never listed), `to_delete`. | COVERED | `pr-raw::test_s3_and_s4_settle_the_blobs_nothing_references_in_a_declared_storage` |
+| [`S3S4.declared-only`](procedo_server_contract.md#rule-S3S4.declared-only) | S3, S4 | An unknown `store_id`: `404`; one of the server's own: `400`. | COVERED | `pr-raw::test_s3_and_s4_take_a_declared_storage_only` |
+
+### 6.7 The import
+
+| Rule id | § | Rule | Status | Kit test(s), or why not |
+|---|---|---|---|---|
+| [`import.never-restore-purge`](procedo_server_contract.md#rule-import.never-restore-purge) | 3.5, E13 | An importer never restores or purges. | COVERED | `pr-raw::test_an_importer_never_restores_or_purges` |
+| [`import.role-and-flag`](procedo_server_contract.md#rule-import.role-and-flag) | 6.7, 3.5 | An importer with `"import": true` on E1, E6, E7, E10, E15, P10 and the deletes of E11/E12 keeps the server-set fields as sent. | COVERED | `pr-raw::test_an_imported_run_keeps_its_pushed_at_and_moves_no_pointer` |
+| [`import.ignored-without`](procedo_server_contract.md#rule-import.ignored-without) | 6.7 | Without `import` or the role, those fields are ignored; an importer's write without `import` needs the call's role. | COVERED | `pr-raw::test_the_import_fields_are_ignored_without_the_importer_role` |
+| [`import.contradiction`](procedo_server_contract.md#rule-import.contradiction) | 6.7 | An imported item contradicting what is held: `409 run_conflict` or `409 changed`. | COVERED | `pr-raw::test_an_imported_run_contradicting_a_held_one_is_409_run_conflict` |
+| [`import.E1-no-pointer`](procedo_server_contract.md#rule-import.E1-no-pointer) | 6.7 | An imported run keeps `pushed_at` and moves no pointer. | COVERED | `pr-raw::test_an_imported_run_keeps_its_pushed_at_and_moves_no_pointer` |
+| [`import.E6-as-sent`](procedo_server_contract.md#rule-import.E6-as-sent) | 6.7 | The pointer is set exactly as sent, `replaces` unchecked; the run must still exist, complete, not deleted. | COVERED | `pr-raw::test_an_imported_pointer_is_set_exactly_as_sent` |
+| [`import.E7-E15-received-at`](procedo_server_contract.md#rule-import.E7-E15-received-at) | 6.7 | Entries keep `received_at` (or none); `current` is computed. | COVERED | `pr-raw::test_imported_entries_keep_their_received_at_or_none` |
+| [`import.E10-generation`](procedo_server_contract.md#rule-import.E10-generation) | 6.7 | A report keeps the `generation` sent; one held with other content: `409 changed`. | COVERED | `pr-raw::test_an_imported_report_keeps_its_generation` |
+| [`import.E11-E12-delete`](procedo_server_contract.md#rule-import.E11-E12-delete) | 6.7 | A delete keeps `deleted_*` as sent and hands nothing on. | COVERED | `pr-raw::test_an_imported_delete_keeps_its_fields_and_hands_nothing_on` |
+| [`import.delete-keeps-pointer`](procedo_server_contract.md#rule-import.delete-keeps-pointer) | 6.7, E11 | After an imported delete, a pointer naming that run keeps naming it: E5 answers it, the run's `current` stays `true`, until E6 or a purge moves it. | COVERED | `pr-raw::test_after_an_imported_delete_the_pointer_keeps_naming_the_run_until_set` |
+| [`import.P10`](procedo_server_contract.md#rule-import.P10) | 6.7, P10 | Filed under the path's id whether or not a test holds it; keeps `version`, `released_at`, `test`; `documents` in place of `files`; `test` and `documents` required under an id no test holds (`400`); the same release again answered again; another: `409 changed`. | COVERED | `pr-raw::test_an_imported_release_is_filed_under_its_id_as_sent` |
+| [`import.bench-seen-not-imported`](procedo_server_contract.md#rule-import.bench-seen-not-imported) | 6.7, 5.14 | A Bench's `first_seen`, `last_seen` are the server's own, never imported. | COVERED | `pr-raw::test_an_imported_run_keeps_its_pushed_at_and_moves_no_pointer` |
+
+### 7. Storages the app reaches itself
+
+| Rule id | § | Rule | Status | Kit test(s), or why not |
+|---|---|---|---|---|
+| [`7.1.references-checked`](procedo_server_contract.md#rule-7.1.references-checked) | 7.1 | A reference into one of the server's own storages is checked: absent bytes `409 missing_files`. | COVERED | `pr-raw::test_a_reference_into_the_servers_own_file_storage_is_checked` |
+| [`7.1.reclaim`](procedo_server_contract.md#rule-7.1.reclaim) | 7.1 | The server reclaims blobs nothing references in its own storages. | HAND | Not observable through the API: what a storage holds is the server's own (README hand check 10). |
+| [`7.1.params-no-secret`](procedo_server_contract.md#rule-7.1.params-no-secret) | 7.1, 5.15 | `params` hold no secret; every value is a string. | COVERED | `pr-raw::test_s1_names_this_server_and_its_storages_without_a_secret` |
+| [`7.3.declared-never-cleaned`](procedo_server_contract.md#rule-7.3.declared-never-cleaned) | 7.3 | The server never deletes in a declared storage; it reports `reachable: false` when it does not reach it. | COVERED | `pr-raw::test_the_server_never_deletes_in_a_storage_the_app_declares` |
+| [`7.3.to-delete-in-purge`](procedo_server_contract.md#rule-7.3.to-delete-in-purge) | 7.3, E13 | E13's `to_delete` carries the project's unreferenced blobs in declared storages. | COVERED | `pr-raw::test_s3_and_s4_settle_the_blobs_nothing_references_in_a_declared_storage` |
+
+### 9. The machine-readable twin
+
+| Rule id | § | Rule | Status | Kit test(s), or why not |
+|---|---|---|---|---|
+| [`9.twin-schemas`](procedo_server_contract.md#rule-9.twin-schemas) | 9 | Every body and answer validates against `procedo_api.openapi.yaml` (patterns, enums, required fields). | COVERED | `conv::test_every_read_answers_what_the_twin_says` |
