@@ -5,6 +5,10 @@ This kit checks that a server follows the Procedo server contract
 it against your own implementation: when every case passes, the Procedo app can use your
 server.
 
+> **What the kit does not ask.** No database (SQL or not), language, framework or hosting: the cases
+> only look at what your server answers over HTTP. The reference server in `suites/reference_server/`
+> keeps everything in memory; it is an example to compare answers against, not a design to copy.
+
 The contract is in this folder, `procedo_server_contract.md`, beside `coverage.md`: every rule
 of the contract with the case that proves it. The twin is `suites/procedo_api.openapi.yaml`.
 

@@ -4,6 +4,13 @@ What a Procedo server must receive, send back and refuse. How it stores anything
 files, a cloud bucket) is its own business. Any server that answers the calls below under these
 rules is a correct one.
 
+> **What this contract does not ask.** No database (SQL or not), language, framework, operating
+> system or hosting. Every rule below is something the app sees: what the server sends back, what
+> it refuses, and what the app reads back later. How the server gets there inside is free. The
+> reference server of the conformance kit (§8) keeps everything in memory: it is an example to
+> compare answers against, not a design to copy. Section 7 (file storages the app writes to itself)
+> matters only to a server that offers them, except 7.3.
+
 Levels: **MUST** means the app cannot work without it. **SHOULD** means one feature degrades
 without it. Every rule stated without a level is a MUST.
 
