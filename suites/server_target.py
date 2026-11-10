@@ -7,7 +7,8 @@ conformance kit (``scripts/build_server_kit.py``) runs the same suites against.
 * ``PROCEDO_KIT_BENCH_TOKEN``: a token whose login holds the roles ``bench`` and ``publisher``.
 * ``PROCEDO_KIT_MANAGER_TOKEN``: a token whose login holds the role ``manager``.
 * ``PROCEDO_KIT_IMPORTER_TOKEN`` (optional): a token whose login holds only the role
-  ``importer`` (contract §6.7). Unset, the cases moving data in are skipped, saying so.
+  ``importer`` (contract §6.7). Unset, the cases moving data in are skipped, saying so; on a
+  server not listing ``import`` (§6.1) they are skipped whatever is set, naming ``import``.
 * ``PROCEDO_KIT_MOVER_TOKEN`` (optional): a token whose login holds the roles ``bench`` and
   ``importer``: the login the app moves a project's data in with (contract §3.5). Unset, the
   case telling it apart is skipped, saying so.
@@ -66,6 +67,26 @@ LOAD_MINUTES_ENV = "PROCEDO_KIT_LOAD_MINUTES"
 #: (``none``, or ids joined by commas), the kit's up-front skips applied as against a server
 #: offering only those (``tests/test_contract_faults.py``). Unset: every call.
 REFERENCE_CALLS_ENV = "PROCEDO_KIT_REFERENCE_CALLS"
+#: The right to move data in (contract §6.1, §6.7): how the kit makes a board on a server
+#: registering its boards (:class:`BoardSeeds`).
+IMPORT = "import"
+#: A project's creation (P11, optional, contract §6.1): how a case gets a fresh project.
+CREATE = "P11"
+#: The calls a case makes whatever the server offers (``reference_server.offer.MADE_ANYWAY``):
+#: a bench's run, a project created; an ``offer_aware`` case is skipped up front for them.
+MADE_ANYWAY = ("E1", CREATE)
+#: What the kit says, once at the end and as each such case's skip reason, on a server not
+#: offering P11: it cannot make a project there.
+NO_FRESH_PROJECT = (
+    "this server does not offer creating projects (P11 not in /info's calls): the cases that "
+    "need a fresh project are skipped"
+)
+#: What the kit says, once as it starts and as each such case's skip reason, on a server
+#: registering its boards that takes no import: it cannot make a board there.
+NO_FRESH_BOARD = (
+    "this server registers its boards and takes no import: the cases that need a fresh board "
+    "are skipped"
+)
 #: role -> (the variable naming its token on a server the environment names, the token the
 #: suites give the reference server for it)
 TOKENS = {
@@ -219,15 +240,33 @@ def registers_boards(base_url: str) -> bool:
 
 def seeds_boards() -> bool:
     """Whether the kit registers its own boards on the server the environment names, which
-    registers its boards (:class:`BoardSeeds`): the importer's token is set."""
+    registers its boards (:class:`BoardSeeds`): it takes imports (§6.1) and the importer's
+    token is set."""
     base = external()
     importer = os.environ.get(TOKENS["importer"][0], "").strip()
-    return bool(base and importer and registers_boards(base))
+    return bool(base and importer and registers_boards(base) and IMPORT in offered(base))
+
+
+def boards_without_import() -> bool:
+    """Whether the server the environment names registers its boards and takes no import
+    (contract §3.3, §6.1): the kit cannot make a board on it."""
+    base = external()
+    return bool(base and registers_boards(base) and IMPORT not in offered(base))
+
+
+def lost_cases() -> list[str]:
+    """What the kit says of the server the environment names, once as it starts and once at the
+    end: the cases it cannot make there (no fresh board, no fresh project)."""
+    base = external()
+    found = [NO_FRESH_BOARD] if boards_without_import() else []
+    if base and CREATE not in offered(base):
+        found.append(NO_FRESH_PROJECT)
+    return [f"Note: {line}." for line in found]
 
 
 def pushes_runs(base_url: str) -> None:
     """Skip this case, a bench pushing runs on boards of its own, on a server registering its
-    boards the kit cannot register its boards on (no importer's token)."""
+    boards the kit cannot register its boards on (no import, or no importer's token)."""
     if external() and registers_boards(base_url) and not seeds_boards():
         skip(missing_for(["E1"], offered(base_url), True))
 
@@ -314,12 +353,17 @@ def missing_for(needed: list[str], listed: frozenset[str], boards: bool) -> str:
 
     reasons = []
     absent = [call for call in OPTIONAL if call in needed and call not in listed]  # §6.1's order
+    if CREATE in absent:
+        reasons.append(NO_FRESH_PROJECT)
+        absent.remove(CREATE)
     if absent:
         reasons.append(
             f"the server does not offer {', '.join(absent)} (not in /info's calls), which this "
             "case makes"
         )
-    if boards and "E1" in needed:
+    if boards and "E1" in needed and IMPORT not in listed:
+        reasons.append(NO_FRESH_BOARD)
+    elif boards and "E1" in needed:
         reasons.append(
             "the server registers its boards itself (/info's boards_registered): this case "
             f"pushes runs on boards of its own, which the kit registers when {TOKENS['importer'][0]} "
@@ -332,8 +376,10 @@ class OfferedCalls:
     """A pytest plugin for the kit run against a server the environment names (contract §6.1):
     before any case runs, each case making an optional call the server does not list in
     ``/info`` (:data:`CALLS_FILE`) is skipped, naming the call, and so is each case pushing a
-    bench's run on a board of its own when the server registers its boards (§3.3). Decided up
-    front, never from what a case met: a case that runs and fails, fails.
+    bench's run on a board of its own when the server registers its boards (§3.3) and the kit
+    cannot register them (no ``import`` listed: :data:`NO_FRESH_BOARD`, said once in the run's
+    header too; or no importer's token). Decided up front, never from what a case met: a case
+    that runs and fails, fails.
 
     A case handling the server's offer itself (marker ``offer_aware``: it reads ``/info`` and
     makes an optional call only when the server lists it) is never skipped for its optional
@@ -354,6 +400,15 @@ class OfferedCalls:
             "boards_unregistered: a case pushing on boards it leaves unregistered (§3.3)",
         )
 
+    def pytest_report_header(self, config) -> list[str]:
+        """Said once as the kit starts: what the kit cannot make on this server."""
+        return lost_cases()
+
+    def pytest_terminal_summary(self, terminalreporter) -> None:
+        """Said again at the end, which ``-q`` (no header) still shows."""
+        for line in lost_cases():
+            terminalreporter.write_line(line)
+
     @pytest.hookimpl(trylast=True)
     def pytest_collection_modifyitems(self, config, items) -> None:
         if not items:
@@ -372,7 +427,7 @@ class OfferedCalls:
         for item in items:
             needed = calls.get(case_key(item.nodeid), [])
             if item.get_closest_marker("offer_aware"):  # its optional calls: only when listed
-                needed = [call for call in needed if call == "E1"]
+                needed = [call for call in needed if call in MADE_ANYWAY]
             if item.get_closest_marker("boards_aware"):  # it reads boards_registered itself
                 needed = [call for call in needed if call != "E1"]
             reason = missing_for(needed, listed, boards and not seeding)
@@ -414,8 +469,9 @@ class _Seeding:
 
 
 class BoardSeeds:
-    """The kit's boards registered on a server registering its boards (contract §3.3), the
-    importer's token given (``PROCEDO_KIT_IMPORTER_TOKEN``).
+    """The kit's boards registered on a server registering its boards (contract §3.3) and taking
+    imports (``import`` in ``/info``'s ``calls``, §6.1), the importer's token given
+    (``PROCEDO_KIT_IMPORTER_TOKEN``).
 
     Hooked into ``http.client``, which every request of the kit goes through. A bench's run
     (E1 without ``"import": true``, whatever the login) that the server refuses ``409
@@ -811,8 +867,9 @@ class CallRecorder:
         if noted is None:
             return
         if getattr(fixturedef.func, "offer_aware", False):
-            # its optional calls made only when the server lists them; its bench's runs counted
-            made = [call for call in noted[start:] if call == offer.BENCH_RUN]
+            # its optional calls made only when the server lists them; its bench's runs and the
+            # projects it creates counted
+            made = [call for call in noted[start:] if call in offer.MADE_ANYWAY]
             noted[start:] = made
         key = (fixturedef.argname, fixturedef.baseid)
         self.fixtures.setdefault(key, set()).update(noted[start:])

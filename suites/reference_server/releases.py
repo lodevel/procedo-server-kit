@@ -193,8 +193,9 @@ def release(call: Call) -> Answer:
     test_key = test_holding(project, test_id)
     if test_key is None and (not importing or state.broken("import.P10")):
         raise not_found(f"No test of this project holds the test_id {test_id}.")
-    if not importing or state.broken("U1.operator-exempt"):  # §6.8: with U1, one of its users
-        offer.known_operator(state.calls, state.people, body.get("released_by"), "released_by")
+    if not importing or state.broken("U1.import-exempt"):  # §6.8: with U1, one of its users
+        offer.known_operator(state.calls, state.people, body.get("released_by"), "released_by",
+                             unnamed_refused=state.unnamed_refused)  # fmt: skip
     releases = project.releases.get(test_id, [])
     # The test's name now, or the name an import says it was released under.
     spelling = nfc(released_as) if released_as else tests_of(project).get(test_key or "")

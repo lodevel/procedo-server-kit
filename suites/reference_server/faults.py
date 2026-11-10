@@ -14,11 +14,18 @@ import os
 
 #: The variable naming the rule to break (one rule id, or several comma-separated).
 ENV = "PROCEDO_CONTRACT_FAULT"
+#: Beside it, for a rule broken call by call (6.1.import-unlisted-501): the one call broken.
+CALL_ENV = "PROCEDO_CONTRACT_FAULT_CALL"
 
 
 def active() -> frozenset[str]:
     """The rule ids the environment names."""
     return frozenset(n.strip() for n in os.environ.get(ENV, "").split(",") if n.strip())
+
+
+def only_call() -> str:
+    """The one call :data:`CALL_ENV` names a rule broken on; ``""``: the fault's own choice."""
+    return os.environ.get(CALL_ENV, "").strip()
 
 
 def on(rule: str) -> bool:

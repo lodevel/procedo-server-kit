@@ -74,8 +74,9 @@ class ApiSession:
 
     def offered(self) -> frozenset[str]:
         """The optional calls this server offers, by their ids (``/info``'s ``calls``, contract
-        §6.1): every core call besides. Kept for the features that need one; nothing reads it
-        yet."""
+        §6.1): every core call besides. A publish reads it: a project is created only on a
+        server listing P11, its releases land only on one listing ``import``
+        (``project_sync_api.publish_refused``)."""
         self.ready()
         return self._calls
 

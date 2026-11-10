@@ -101,48 +101,244 @@
    "L2",
    "L3"
   ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[.trash/kit/kit.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[bundle/kit/kit.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[evidence/kit/kit.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[exports/kit/kit.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[releases/kit/kit.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[reports/kit/kit.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[results/kit/kit.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[serial_numbers/kit/kit.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[tests/T1/.T1.copying/kit.md-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[tests/T1/.T1.copying2/kit.md-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[tests/T1/.T1.deleting/kit.md-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[tests/T1/.T1.deleting2/kit.md-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[tests/T1/.bundle_installed.json/kit.md-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[tests/T1/.evidence-rename.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[tests/T1/.llm_chat_history.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[tests/T1/.llm_session.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[tests/T1/.media_cache/kit.md-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[tests/T1/.project_id.lock-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[tests/T1/.project_id/kit.md-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[tests/T1/.venv/kit.md-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[tests/T1/__pycache__/kit.md-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[tests/T1/bench_fingerprints.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[tests/T1/bench_preflight.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[tests/T1/bench_unsafe.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[tests/T1/config.json.sync.17.part-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_new_project_holding_a_path_that_never_travels_is_refused_whole[tests/T1/procedure.json.bak-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[.trash/kit/kit.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[bundle/kit/kit.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[evidence/kit/kit.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[exports/kit/kit.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[releases/kit/kit.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[reports/kit/kit.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[results/kit/kit.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[serial_numbers/kit/kit.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[tests/T1/.T1.copying/kit.md-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[tests/T1/.T1.copying2/kit.md-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[tests/T1/.T1.deleting/kit.md-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[tests/T1/.T1.deleting2/kit.md-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[tests/T1/.bundle_installed.json/kit.md-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[tests/T1/.evidence-rename.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[tests/T1/.llm_chat_history.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[tests/T1/.llm_session.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[tests/T1/.media_cache/kit.md-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[tests/T1/.project_id.lock-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[tests/T1/.project_id/kit.md-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[tests/T1/.venv/kit.md-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[tests/T1/__pycache__/kit.md-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[tests/T1/bench_fingerprints.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[tests/T1/bench_preflight.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[tests/T1/bench_unsafe.json-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[tests/T1/config.json.sync.17.part-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_a_push_of_a_path_that_never_travels_is_refused_alone[tests/T1/procedure.json.bak-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_every_action_reads_back_as_it_went_in_over_the_json_api[a_change_leaving_a_test_without_a_valid_test_id_is_refused_alone-api]": [
+   "P11"
+  ],
   "test_project_conformance.py::test_every_action_reads_back_as_it_went_in_over_the_json_api[a_deleted_tests_releases_stay_under_its_id-api]": [
+   "P11",
    "P3",
    "P4",
    "P8",
    "P8b"
   ],
+  "test_project_conformance.py::test_every_action_reads_back_as_it_went_in_over_the_json_api[a_draft_is_kept_only_with_its_tests_id-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_every_action_reads_back_as_it_went_in_over_the_json_api[a_name_compares_by_its_nfc_form_and_folded_case-api]": [
+   "P11"
+  ],
   "test_project_conformance.py::test_every_action_reads_back_as_it_went_in_over_the_json_api[a_new_test_with_a_deleted_tests_name_starts_at_v1_and_sees_no_old_release-api]": [
+   "P11",
    "P4",
    "P8"
   ],
+  "test_project_conformance.py::test_every_action_reads_back_as_it_went_in_over_the_json_api[a_path_that_never_travels_as_a_file_is_refused-api]": [
+   "P11"
+  ],
+  "test_project_conformance.py::test_every_action_reads_back_as_it_went_in_over_the_json_api[a_project_created_reads_back_byte_for_byte-api]": [
+   "P11"
+  ],
   "test_project_conformance.py::test_every_action_reads_back_as_it_went_in_over_the_json_api[a_release_made_in_a_working_copy_is_the_storages_and_the_same_file_in_the_copy-api]": [
+   "P11",
    "P3",
    "P8b"
   ],
   "test_project_conformance.py::test_every_action_reads_back_as_it_went_in_over_the_json_api[a_release_moved_in_lands_as_it_was-api]": [
+   "P11",
    "P8",
-   "P8b"
+   "P8b",
+   "import"
   ],
   "test_project_conformance.py::test_every_action_reads_back_as_it_went_in_over_the_json_api[a_release_of_an_id_no_test_holds_is_not_found-api]": [
+   "P11",
    "P8",
    "P8b"
   ],
   "test_project_conformance.py::test_every_action_reads_back_as_it_went_in_over_the_json_api[a_release_reads_back_with_its_documents-api]": [
+   "P11",
    "P8",
    "P8b"
   ],
   "test_project_conformance.py::test_every_action_reads_back_as_it_went_in_over_the_json_api[a_rename_keeps_its_releases-api]": [
+   "P11",
    "P3",
    "P8"
   ],
   "test_project_conformance.py::test_every_action_reads_back_as_it_went_in_over_the_json_api[a_token_the_storage_cannot_answer_from_is_gone-api]": [
+   "P11",
    "P3"
+  ],
+  "test_project_conformance.py::test_every_action_reads_back_as_it_went_in_over_the_json_api[a_write_over_a_file_changed_meanwhile_is_changed_and_the_rest_still_applies-api]": [
+   "P11"
   ],
   "test_project_conformance.py::test_every_action_reads_back_as_it_went_in_over_the_json_api[changes_since_a_token_bring_what_moved_and_nothing_else-api]": [
+   "P11",
    "P3"
   ],
+  "test_project_conformance.py::test_every_action_reads_back_as_it_went_in_over_the_json_api[creating_it_again_is_a_replay_and_another_under_its_id_or_name_is_refused-api]": [
+   "P11"
+  ],
   "test_project_conformance.py::test_every_action_reads_back_as_it_went_in_over_the_json_api[the_tests_read_back_with_their_format_and_files-api]": [
+   "P11",
    "P4",
    "P5"
   ],
   "test_project_conformance.py::test_every_action_reads_back_as_it_went_in_over_the_json_api[two_tests_with_one_test_id_are_refused-api]": [
+   "P11",
    "P4"
+  ],
+  "test_server_contract_calls.py::test_a_server_not_listing_import_grants_no_importer_and_refuses_every_import_501": [
+   "E1",
+   "E11",
+   "E12",
+   "E15",
+   "E6"
   ],
   "test_server_contract_calls.py::test_a_server_registering_its_boards_lists_them_before_any_run_and_refuses_others": [
    "E1",
@@ -150,154 +346,183 @@
   ],
   "test_server_contract_calls.py::test_a_server_registering_its_boards_takes_an_import_and_a_replay_on_any_board": [
    "E1",
-   "E15"
-  ],
-  "test_server_contract_calls.py::test_info_lists_the_optional_calls_offered_and_each_one_not_listed_is_501": [
-   "E11",
-   "E12",
-   "E13",
-   "E14",
    "E15",
-   "E16",
-   "E17",
-   "E2",
-   "E6",
-   "L1",
-   "L2",
-   "L3",
-   "P3",
-   "P4",
-   "P5",
-   "P6",
-   "P8",
-   "P8b",
-   "S2",
-   "S3",
-   "S4",
-   "U1"
+   "import"
   ],
   "test_server_contract_calls.py::test_u1_lists_the_active_users_by_display_name_then_name": [
    "U1"
   ],
   "test_server_contract_calls.py::test_with_u1_a_replay_is_answered_after_its_operator_left": [
-   "E1"
+   "E1",
+   "P11"
+  ],
+  "test_server_contract_calls.py::test_with_u1_a_run_or_a_release_naming_nobody_is_taken_or_refused_as_the_server_chooses": [
+   "E1",
+   "P11"
   ],
   "test_server_contract_calls.py::test_with_u1_a_run_or_a_release_naming_none_of_its_users_is_409_unknown_operator": [
-   "E1"
+   "E1",
+   "P11"
+  ],
+  "test_server_contract_calls.py::test_with_u1_an_import_keeps_a_name_the_server_does_not_list": [
+   "P11",
+   "import"
   ],
   "test_server_contract_calls.py::test_without_e6_an_imported_delete_hands_the_pointer_on_as_a_benchs_does": [
-   "E11"
+   "E11",
+   "import"
+  ],
+  "test_server_contract_calls.py::test_without_e6_an_imported_run_moves_the_pointer_by_the_rule_in_any_order": [
+   "import"
   ],
   "test_server_contract_calls.py::test_without_p3_every_change_token_is_empty_and_with_it_none_is": [
+   "P11",
    "P4",
    "P5",
    "P6"
   ],
   "test_server_contract_conventions.py::test_a_board_fields_name_and_a_never_travel_name_compare_exactly": [
    "E1",
-   "E15"
+   "E15",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_board_name_with_a_blank_around_it_is_refused[E1-board_revision]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_board_name_with_a_blank_around_it_is_refused[E1-part_number]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_board_name_with_a_blank_around_it_is_refused[E1-serial]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_board_name_with_a_blank_around_it_is_refused[E15-part_number]": [
    "E1",
-   "E15"
+   "E15",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_board_name_with_a_blank_around_it_is_refused[E15-serial]": [
    "E1",
-   "E15"
+   "E15",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_board_name_with_a_blank_around_it_is_refused[E5-board_revision]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_board_name_with_a_blank_around_it_is_refused[E5-serial]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_board_name_with_a_blank_around_it_is_refused[E6-serial]": [
    "E1",
-   "E6"
+   "E6",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_board_name_with_a_blank_around_it_is_refused[E9-serial]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_body_over_the_limit_is_413_before_it_is_read[B1-expect-100]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_body_over_the_limit_is_413_before_it_is_read[B1-no-expect]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_body_over_the_limit_is_413_before_it_is_read[P11-expect-100]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_body_over_the_limit_is_413_before_it_is_read[P11-no-expect]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_call_the_server_does_not_take_is_unsupported_never_not_found[get-on-a-post-call]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_call_the_server_does_not_take_is_unsupported_never_not_found[unknown-get]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_call_the_server_does_not_take_is_unsupported_never_not_found[unknown-post]": [
-   "E1"
+   "E1",
+   "P11"
+  ],
+  "test_server_contract_conventions.py::test_a_change_made_on_the_server_meanwhile_is_200_changed_not_an_error": [
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_cursor_and_a_token_are_taken_back_verbatim": [
    "E1",
    "E2",
+   "P11",
    "P3"
   ],
   "test_server_contract_conventions.py::test_a_delete_restore_or_purge_from_a_bench_is_403_not_a_manager[E11-delete]": [
    "E1",
-   "E11"
+   "E11",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_delete_restore_or_purge_from_a_bench_is_403_not_a_manager[E11-restore]": [
    "E1",
-   "E11"
+   "E11",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_delete_restore_or_purge_from_a_bench_is_403_not_a_manager[E12-delete]": [
    "E1",
-   "E12"
+   "E12",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_delete_restore_or_purge_from_a_bench_is_403_not_a_manager[E12-restore]": [
    "E1",
-   "E12"
+   "E12",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_delete_restore_or_purge_from_a_bench_is_403_not_a_manager[E13]": [
    "E1",
-   "E13"
+   "E13",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_field_the_server_does_not_know_is_kept": [
    "E1",
-   "E15"
+   "E15",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_field_with_no_value_is_left_out_not_null": [
-   "E1"
+   "E1",
+   "P11"
+  ],
+  "test_server_contract_conventions.py::test_a_file_in_the_wrong_form_refuses_the_whole_request": [
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_filter_with_a_blank_around_it_matches_nothing_and_is_not_refused": [
    "E1",
-   "E2"
+   "E2",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_format_version_the_object_does_not_have_is_refused_with_the_known_one[L3-2]": [
    "L3"
+  ],
+  "test_server_contract_conventions.py::test_a_format_version_the_object_does_not_have_is_refused_with_the_known_one[P11-2]": [
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_library_item_names_the_login_and_the_servers_time": [
    "L3"
   ],
   "test_server_contract_conventions.py::test_a_login_holding_only_manager_cannot_push_a_run": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_login_the_call_is_not_for_is_403_even_where_nothing_named_is_held": [
    "E1",
    "E11",
    "E12",
-   "E13"
+   "E13",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_malformed_test_id_is_400_before_the_project_is_looked_at[E2-name]": [
    "E2"
@@ -329,94 +554,129 @@
   "test_server_contract_conventions.py::test_a_malformed_test_id_is_400_before_the_project_is_looked_at[P8b-upper]": [
    "P8b"
   ],
+  "test_server_contract_conventions.py::test_a_move_differing_only_by_case_respells_the_folder": [
+   "P11"
+  ],
   "test_server_contract_conventions.py::test_a_multipart_answer_is_never_gzipped_whole": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_name_differing_only_by_case_answers_its_first_spelling": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_name_holding_slash_hash_plus_and_blanks_reaches_the_server_as_one_name": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_name_sent_in_another_unicode_form_is_stored_in_nfc": [
-   "E1"
+   "E1",
+   "P11"
+  ],
+  "test_server_contract_conventions.py::test_a_new_project_with_a_path_no_pc_can_hold_is_refused": [
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_part_over_one_mib_is_400_naming_it_in_large": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_path_no_pc_can_hold_refuses_the_whole_request[backslash]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_path_no_pc_can_hold_refuses_the_whole_request[colon]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_path_no_pc_can_hold_refuses_the_whole_request[control]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_path_no_pc_can_hold_refuses_the_whole_request[device-extension]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_path_no_pc_can_hold_refuses_the_whole_request[device]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_path_no_pc_can_hold_refuses_the_whole_request[dot]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_path_no_pc_can_hold_refuses_the_whole_request[dotdot]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_path_no_pc_can_hold_refuses_the_whole_request[empty]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_path_no_pc_can_hold_refuses_the_whole_request[gt]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_path_no_pc_can_hold_refuses_the_whole_request[long]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_path_no_pc_can_hold_refuses_the_whole_request[lt]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_path_no_pc_can_hold_refuses_the_whole_request[path-leading-blank]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_path_no_pc_can_hold_refuses_the_whole_request[path-trailing-blank]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_path_no_pc_can_hold_refuses_the_whole_request[pipe]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_path_no_pc_can_hold_refuses_the_whole_request[question]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_path_no_pc_can_hold_refuses_the_whole_request[quote]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_path_no_pc_can_hold_refuses_the_whole_request[star]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_path_no_pc_can_hold_refuses_the_whole_request[trailing-blank-name]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_path_no_pc_can_hold_refuses_the_whole_request[trailing-dot]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_pointer_moved_meanwhile_is_200_changed_not_an_error": [
    "E1",
-   "E6"
+   "E6",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_project_or_library_version_held_already_is_409": [
-   "L3"
+   "L3",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_projects_own_field_that_is_not_a_string_is_refused[board-field]": [
    "E1",
-   "E15"
+   "E15",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_projects_own_field_that_is_not_a_string_is_refused[report-fields]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_projects_own_field_that_is_not_a_string_is_refused[run-extra]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_query_parameter_a_call_does_not_define_is_refused": [
    "E1",
@@ -426,82 +686,107 @@
    "E2",
    "L1",
    "L2",
+   "P11",
    "P4",
    "P8",
    "P8b"
   ],
   "test_server_contract_conventions.py::test_a_range_past_the_end_is_416_with_the_files_size": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_reference_to_bytes_not_there_is_409_missing_files_and_nothing_is_written": [
-   "E1"
+   "E1",
+   "P11"
+  ],
+  "test_server_contract_conventions.py::test_a_release_conflict_is_409_with_what_the_server_holds": [
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_replay_is_the_same_json_whatever_its_encoding": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_request_without_a_valid_token_is_401_whatever_else_is_wrong[garbage]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_request_without_a_valid_token_is_401_whatever_else_is_wrong[none]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_text_whose_bytes_are_not_its_version_and_size_is_refused[size]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_text_whose_bytes_are_not_its_version_and_size_is_refused[version]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_write_the_logins_roles_do_not_allow_is_403_forbidden[B1]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_write_the_logins_roles_do_not_allow_is_403_forbidden[E10]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_write_the_logins_roles_do_not_allow_is_403_forbidden[E15]": [
    "E1",
-   "E15"
+   "E15",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_write_the_logins_roles_do_not_allow_is_403_forbidden[E6]": [
    "E1",
-   "E6"
+   "E6",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_write_the_logins_roles_do_not_allow_is_403_forbidden[E7]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_write_the_logins_roles_do_not_allow_is_403_forbidden[L3]": [
    "E1",
-   "L3"
+   "L3",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_write_the_logins_roles_do_not_allow_is_403_forbidden[P10]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_write_the_logins_roles_do_not_allow_is_403_forbidden[P11]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_write_the_logins_roles_do_not_allow_is_403_forbidden[P9]": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_a_write_to_what_a_manager_deleted_is_409_deleted": [
    "E1",
    "E11",
-   "E12"
+   "E12",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_an_undefined_parameter_is_400_even_where_the_path_names_nothing_held": [
    "E1",
    "L2",
+   "P11",
    "P4",
    "P8b"
   ],
   "test_server_contract_conventions.py::test_an_unknown_field_sent_null_reads_back_absent": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_answer_fields_a_client_sends_are_ignored_and_every_server_time_is_its_clock": [
    "E1",
    "E11",
-   "E15"
+   "E15",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_bytes_not_matching_their_name_are_422_digest_mismatch": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_every_login_reads_whatever_its_roles": [
    "E1",
@@ -511,6 +796,7 @@
    "E2",
    "L1",
    "L2",
+   "P11",
    "P4",
    "P8",
    "P8b"
@@ -523,12 +809,14 @@
    "E2",
    "L1",
    "L2",
+   "P11",
    "P4",
    "P8",
    "P8b"
   ],
   "test_server_contract_conventions.py::test_no_part_of_a_multipart_answer_carries_a_content_encoding": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_conventions.py::test_the_key_calls_answer_on_the_base_with_or_without_its_trailing_slash[with]": [
    "E1",
@@ -538,6 +826,7 @@
    "E2",
    "L1",
    "L2",
+   "P11",
    "P4",
    "P8",
    "P8b"
@@ -550,6 +839,7 @@
    "E2",
    "L1",
    "L2",
+   "P11",
    "P4",
    "P8",
    "P8b"
@@ -671,7 +961,8 @@
   "test_server_contract_evidence.py::test_e13_purging_a_run_a_pointer_still_names_hands_the_pointer_on": [
    "E1",
    "E11",
-   "E13"
+   "E13",
+   "import"
   ],
   "test_server_contract_evidence.py::test_e14_lists_a_bench_by_the_requests_that_named_it": [
    "E1",
@@ -761,6 +1052,21 @@
   "test_server_contract_evidence.py::test_the_same_file_with_another_info_is_the_next_generation": [
    "E1"
   ],
+  "test_server_contract_projects.py::test_a_body_neither_json_nor_multipart_is_400": [
+   "P11"
+  ],
+  "test_server_contract_projects.py::test_a_body_over_its_limit_is_413_before_it_is_sent": [
+   "P11"
+  ],
+  "test_server_contract_projects.py::test_a_bundles_archive_is_kept_as_sent_never_repacked": [
+   "P11"
+  ],
+  "test_server_contract_projects.py::test_a_damaged_blob_is_missing_and_the_bytes_sent_again_replace_it": [
+   "P11"
+  ],
+  "test_server_contract_projects.py::test_a_file_of_exactly_one_mib_rides_as_a_part_both_ways": [
+   "P11"
+  ],
   "test_server_contract_projects.py::test_a_library_version_differing_only_by_case_is_409_exists": [
    "L2",
    "L3"
@@ -770,55 +1076,134 @@
    "L3"
   ],
   "test_server_contract_projects.py::test_a_login_holding_importer_beside_bench_imports_and_pushes_as_a_bench": [
-   "E1"
+   "E1",
+   "import"
+  ],
+  "test_server_contract_projects.py::test_a_malformed_change_refuses_the_whole_request": [
+   "P11"
+  ],
+  "test_server_contract_projects.py::test_a_move_already_made_is_a_replay_writing_nothing": [
+   "P11"
+  ],
+  "test_server_contract_projects.py::test_a_move_into_itself_or_changing_a_files_form_or_never_travelling_is_refused": [
+   "P11"
+  ],
+  "test_server_contract_projects.py::test_a_move_meeting_other_files_is_changed_and_moves_nothing": [
+   "P11"
+  ],
+  "test_server_contract_projects.py::test_a_number_carried_before_releases_is_kept_and_the_next_release_follows_it": [
+   "P11",
+   "import"
+  ],
+  "test_server_contract_projects.py::test_a_part_no_file_names_is_ignored_and_not_kept": [
+   "P11"
+  ],
+  "test_server_contract_projects.py::test_a_part_over_one_mib_is_400_with_its_version_and_nothing_written": [
+   "P11"
+  ],
+  "test_server_contract_projects.py::test_a_part_whose_bytes_are_not_its_name_is_422_digest_mismatch": [
+   "P11"
+  ],
+  "test_server_contract_projects.py::test_a_part_whose_size_is_not_its_files_size_is_400": [
+   "P11"
   ],
   "test_server_contract_projects.py::test_a_project_known_only_by_its_evidence_is_no_project_of_the_project_calls": [
-   "E1"
+   "E1",
+   "P11"
+  ],
+  "test_server_contract_projects.py::test_a_projects_store_id_names_the_storage_its_new_files_go_to": [
+   "P11"
   ],
   "test_server_contract_projects.py::test_a_reference_into_a_storage_the_server_does_not_reach_is_assumed_to_hold": [
+   "P11",
    "S2"
   ],
   "test_server_contract_projects.py::test_a_reference_into_the_servers_own_file_storage_is_checked": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_projects.py::test_a_reference_to_bytes_not_there_is_409_missing_files_and_nothing_written": [
-   "E1"
+   "E1",
+   "P11"
+  ],
+  "test_server_contract_projects.py::test_a_release_and_its_test_read_back_through_the_core_calls": [
+   "P11"
   ],
   "test_server_contract_projects.py::test_a_releases_document_the_server_cannot_give_is_missing_by_its_name": [
+   "P11",
    "P8b"
   ],
+  "test_server_contract_projects.py::test_a_renamed_test_keeps_its_id_and_its_draft": [
+   "P11"
+  ],
+  "test_server_contract_projects.py::test_a_request_carrying_only_drafts_moves_no_token": [
+   "P11"
+  ],
+  "test_server_contract_projects.py::test_a_request_sent_again_moves_no_token_and_p3_brings_nothing": [
+   "P11"
+  ],
   "test_server_contract_projects.py::test_a_since_token_the_server_cannot_answer_from_is_410_gone_kind_not_found": [
+   "P11",
    "P3"
+  ],
+  "test_server_contract_projects.py::test_a_test_json_naming_neither_text_nor_code_is_code": [
+   "P11"
   ],
   "test_server_contract_projects.py::test_a_test_name_where_a_test_id_goes_is_400_before_the_project_is_looked_at": [
    "P8",
    "P8b"
   ],
   "test_server_contract_projects.py::test_a_write_may_reference_without_its_part_a_blob_its_project_holds": [
-   "E1"
+   "E1",
+   "P11"
+  ],
+  "test_server_contract_projects.py::test_a_write_over_a_file_the_server_does_not_hold_is_changed_without_current": [
+   "P11"
   ],
   "test_server_contract_projects.py::test_after_an_imported_delete_the_pointer_keeps_naming_the_run_until_set": [
    "E1",
    "E11",
-   "E6"
+   "E6",
+   "import"
+  ],
+  "test_server_contract_projects.py::test_an_answer_takes_its_form_from_what_it_sends_never_from_accept": [
+   "P11"
   ],
   "test_server_contract_projects.py::test_an_answer_with_parts_is_multipart_mixed_with_the_json_part_first": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_projects.py::test_an_empty_since_is_400": [
+   "P11",
    "P3"
   ],
   "test_server_contract_projects.py::test_an_imported_delete_keeps_its_fields_and_hands_nothing_on": [
    "E1",
    "E11",
-   "E12"
+   "E12",
+   "import"
+  ],
+  "test_server_contract_projects.py::test_an_imported_incomplete_run_never_becomes_current": [
+   "import"
   ],
   "test_server_contract_projects.py::test_an_imported_pointer_is_set_exactly_as_sent": [
    "E1",
-   "E6"
+   "E6",
+   "import"
+  ],
+  "test_server_contract_projects.py::test_an_imported_release_is_filed_under_its_id_as_sent": [
+   "P11",
+   "import"
+  ],
+  "test_server_contract_projects.py::test_an_imported_report_keeps_its_generation": [
+   "import"
   ],
   "test_server_contract_projects.py::test_an_imported_run_contradicting_a_held_one_is_409_run_conflict": [
-   "E1"
+   "E1",
+   "import"
+  ],
+  "test_server_contract_projects.py::test_an_imported_run_keeps_its_pushed_at_and_moves_no_pointer": [
+   "import"
   ],
   "test_server_contract_projects.py::test_an_importer_never_restores_or_purges": [
    "E1",
@@ -826,10 +1211,18 @@
    "E13"
   ],
   "test_server_contract_projects.py::test_an_unknown_store_id_in_a_reference_is_400": [
-   "E1"
+   "E1",
+   "P11"
   ],
   "test_server_contract_projects.py::test_b1_takes_a_file_for_a_project_not_held_yet_and_the_json_after_finds_it": [
-   "E1"
+   "E1",
+   "P11"
+  ],
+  "test_server_contract_projects.py::test_b2_answers_a_file_of_at_most_one_mib_too": [
+   "P11"
+  ],
+  "test_server_contract_projects.py::test_bytes_one_project_holds_are_missing_for_another": [
+   "P11"
   ],
   "test_server_contract_projects.py::test_contains_code_false_for_a_kind_that_holds_code_is_400": [
    "L2",
@@ -837,15 +1230,21 @@
   ],
   "test_server_contract_projects.py::test_e13_leaves_to_delete_out_when_there_is_none": [
    "E13",
+   "P11",
    "S2",
    "S4"
   ],
   "test_server_contract_projects.py::test_each_read_twin_answers_as_its_get": [
-   "E1"
+   "E1",
+   "P11"
+  ],
+  "test_server_contract_projects.py::test_have_leaves_out_the_parts_the_reader_holds": [
+   "P11"
   ],
   "test_server_contract_projects.py::test_imported_entries_keep_their_received_at_or_none": [
    "E1",
-   "E15"
+   "E15",
+   "import"
   ],
   "test_server_contract_projects.py::test_l1_lists_by_kind_id_and_publication_without_manifests": [
    "L1",
@@ -863,15 +1262,39 @@
    "L2",
    "L3"
   ],
+  "test_server_contract_projects.py::test_p10_refuses_two_files_taking_one_document_name": [
+   "P11"
+  ],
+  "test_server_contract_projects.py::test_p10_releases_the_paths_id_whatever_the_body_says_and_answers_light": [
+   "P11"
+  ],
+  "test_server_contract_projects.py::test_p11_keeps_the_drafts_as_p9_does": [
+   "P11"
+  ],
+  "test_server_contract_projects.py::test_p11_refuses_a_name_no_pc_can_hold_as_a_folder": [
+   "P11"
+  ],
+  "test_server_contract_projects.py::test_p11_refuses_a_project_breaking_the_test_id_rules_400_nothing_written": [
+   "P11"
+  ],
+  "test_server_contract_projects.py::test_p1_lists_each_project_light_with_its_path_by_folded_name": [
+   "P11"
+  ],
   "test_server_contract_projects.py::test_p3_brings_each_release_made_since_its_token_and_the_token_moves": [
+   "P11",
    "P3"
   ],
   "test_server_contract_projects.py::test_p4_lists_each_test_with_its_id_format_and_release_without_files": [
+   "P11",
    "P4"
   ],
   "test_server_contract_projects.py::test_p5_and_p6_key_the_tests_as_asked_and_list_the_missing_as_asked": [
+   "P11",
    "P5",
    "P6"
+  ],
+  "test_server_contract_projects.py::test_releases_are_numbered_per_id_named_now_and_kept_through_a_rename_or_a_delete": [
+   "P11"
   ],
   "test_server_contract_projects.py::test_s2_declares_a_storage_it_cannot_open_and_says_it_does_not_reach_it": [
    "S2"
@@ -884,6 +1307,7 @@
   ],
   "test_server_contract_projects.py::test_s3_and_s4_settle_the_blobs_nothing_references_in_a_declared_storage": [
    "E13",
+   "P11",
    "S2",
    "S3",
    "S4"
@@ -893,14 +1317,25 @@
    "S4"
   ],
   "test_server_contract_projects.py::test_the_import_fields_are_ignored_without_the_importer_role": [
-   "E1"
+   "E1",
+   "import"
   ],
   "test_server_contract_projects.py::test_the_server_never_deletes_in_a_storage_the_app_declares": [
    "E1",
    "E11",
    "E13",
+   "P11",
    "S2",
    "S3"
+  ],
+  "test_server_contract_projects.py::test_two_parts_with_one_name_are_400": [
+   "P11"
+  ],
+  "test_server_http_conformance.py::test_a_project_written_through_one_form_of_the_base_reads_back_through_the_other": [
+   "P11"
+  ],
+  "test_server_http_conformance.py::test_a_valid_login_without_the_right_is_403_never_401": [
+   "P11"
   ]
  }
 }

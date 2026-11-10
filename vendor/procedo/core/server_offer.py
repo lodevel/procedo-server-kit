@@ -4,7 +4,8 @@ grey on a server that does not offer a feature (the approved mock-up *Server lis
 A server lists the optional calls it offers in ``/info``'s ``calls`` (§3.3); one it does not list
 answers ``501``. The app offers a feature only when the server lists every call of its group
 (:data:`SEARCH`, :data:`SET_CURRENT`, :data:`DELETE` (the same as :data:`TRASH`),
-:data:`LIBRARY`, :data:`BOARD_ENTRIES`), and **sends an optional call only to a server listing it**:
+:data:`LIBRARY`, :data:`BOARD_ENTRIES`, :data:`IMPORT`: moving data in, an ``"import": true`` in
+a call's body, :data:`CREATE`: publishing a project made on a PC), and **sends an optional call only to a server listing it**:
 
 * **What each server offers** is noted here, in memory, by the server's identity, each time its
   ``/info`` is read (:func:`note`, from ``ApiWire.info``), and from what this PC kept of it the
@@ -34,6 +35,11 @@ SET_CURRENT = ("E6",)
 DELETE = TRASH = ("E2", "E11", "E12", "E13")
 LIBRARY = ("L1", "L2", "L3")
 BOARD_ENTRIES = ("E15",)
+#: Moving data in as it was (§6.7): ``"import": true`` in the body of E1, E6, E7, E10, E15, P10
+#: and the deletes of E11 and E12, taken only by a server listing ``import``.
+IMPORT = ("import",)
+#: Creating a project (P11, optional, owner 2026-11-10): publishing a project made on a PC.
+CREATE = ("P11",)
 #: What Search Results' fields propose beside E4 (a core call): tests, benches, operators,
 #: readings.
 TESTS, BENCHES, OPERATORS, READINGS = "P4", "E14", "E16", "E17"
@@ -46,6 +52,8 @@ NO_DELETE = "This server does not offer deleting results."
 NO_TRASH = "This server has no trash."
 NO_LIBRARY = "This server does not offer a library."
 NO_BOARD_ENTRIES = "This server does not keep board fields: recorded with this run."
+NO_IMPORT = "This server does not offer moving data in."
+NO_CREATE = "This server does not offer creating projects."
 
 #: What the guard says of a call it does not send, by its id: the feature's words.
 REASONS: dict[str, str] = {
@@ -59,6 +67,8 @@ REASONS: dict[str, str] = {
     "L1": NO_LIBRARY,
     "L2": NO_LIBRARY,
     "L3": NO_LIBRARY,
+    "import": NO_IMPORT,
+    "P11": NO_CREATE,
 }
 #: The code a refused call carries: the one a server's ``501`` carries (§4.4).
 UNSUPPORTED = "unsupported"
@@ -71,6 +81,7 @@ OPTIONAL_OPS: dict[str, str] = {
     "listReleases": "P8",
     "getRelease": "P8b",
     "readRelease": "P8b",
+    "createProject": "P11",
     "searchRuns": "E2",
     "setCurrent": "E6",
     "deleteRun": "E11",
@@ -137,9 +148,22 @@ def call_id(op: str, query: Mapping[str, Any] | None = None) -> str:
     return OPTIONAL_OPS.get(op, "")
 
 
-def refused(op: str, query: Mapping[str, Any] | None, body: Any, calls: frozenset[str]) -> str:
+def refused(
+    op: str,
+    query: Mapping[str, Any] | None,
+    body: Any,
+    calls: frozenset[str],
+    *,
+    importing: bool = False,
+) -> str:
     """Why the call *op* is not sent to a server offering *calls*: its feature's words, ``""``
-    when it is sent (a core call, or one listed). ``readProject`` names ``since`` in its body."""
+    when it is sent (a core call, or one listed). ``readProject`` names ``since`` in its body.
+    An import (*importing*, said by the caller that built the body, or a body still a dict
+    saying ``"import": true``) is sent only to a server listing ``import``."""
+    if isinstance(body, dict) and body.get("import") is True:
+        importing = True
+    if importing and IMPORT[0] not in calls:
+        return NO_IMPORT
     asked = dict(query or {})
     if isinstance(body, dict) and "since" in body:
         asked["since"] = body["since"]

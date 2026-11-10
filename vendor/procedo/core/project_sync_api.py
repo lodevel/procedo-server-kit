@@ -53,6 +53,7 @@ from . import (
     project_origin,
     project_sync,
     project_sync_pass,
+    server_offer,
     test_release,
 )
 from . import project_sync_api_steps as steps
@@ -350,7 +351,12 @@ def publish(
 
     **Run again after a failure, it finishes**: the project created by the pass that failed is
     the same request again, a replay the server answers with the project (``P11``), and each
-    release it already holds is answered again (``P10``, contract §6.7)."""
+    release it already holds is answered again (``P10``, contract §6.7).
+
+    **A project holding releases is refused before anything is written** by a web server that
+    takes no import (``import`` not in its ``/info``'s ``calls``, contract §6.1): published
+    without them, they would be lost without a word; and any project by a web server not offering
+    P11, creating projects (:func:`publish_refused`)."""
     working_copy = Path(working_copy)
     project_sync._require_project_folder(working_copy)
     project_id = project_origin.project_id_in(working_copy)
@@ -372,10 +378,13 @@ def publish(
         if bundle and (why := steps.unsendable(bundle)):
             report.skipped.append((steps.BUNDLE, why))
             bundle = None
+        releases = _releases_of(working_copy)
+        if why := publish_refused(source, len(releases)):
+            raise EvidenceError("invalid", why, code=server_offer.UNSUPPORTED)
         made = source.create_project(PurePosixPath(base).name, files, bundle, ctx)
         if made.project_id != project_id:
             raise EvidenceError("foreign", f"The server answered for project {made.project_id}.")
-        _import_releases(working_copy, source, project_id, ctx)
+        _import_releases(releases, source, project_id, ctx)
         origin = Origin(
             backend=backend,
             identity=identity,
@@ -409,19 +418,44 @@ class ReleasesNotKept(EvidenceError):
         self.landed, self.total = landed, total
 
 
+def _releases_of(working_copy: Path) -> list:
+    """The copy's releases (``releases/<test_id>/v<N>.json``), as records."""
+    from .evidence_store_fs_shared import FsTree
+    from .project_tree_releases import all_records
+
+    return [kept for held in all_records(FsTree(working_copy), working_copy).values()
+            for kept in held]  # fmt: skip
+
+
+def publish_refused(source: ProjectSource, releases: int) -> str:
+    """Why a project holding *releases* (0: none) is not published to *source*, before anything
+    is written: its web server does not offer creating projects (P11, contract §6.1); or it
+    takes no import while the project holds releases, which could not land as they are. ``""``
+    when it may (a server offering both, or a storage that is no web server). Reads the
+    server's ``/info``: on a worker."""
+    session = getattr(source, "session", None)
+    if session is None:
+        return ""
+    offered = session.offered()
+    if not set(server_offer.CREATE) <= offered:
+        return f"{server_offer.NO_CREATE} Nothing was published."
+    if not releases or set(server_offer.IMPORT) <= offered:
+        return ""
+    which = "its release" if releases == 1 else f"its {releases} releases"
+    return (
+        f"{server_offer.NO_IMPORT} This project holds {which}, which would not move there: "
+        "nothing was published."
+    )
+
+
 def _import_releases(
-    working_copy: Path, source: ProjectSource, project_id: str, ctx: OpContext
+    kept_all: list, source: ProjectSource, project_id: str, ctx: OpContext
 ) -> None:
-    """The copy's releases (``releases/<test_id>/v<N>.json``) landed on the server AS THEY ARE
+    """The copy's releases (*kept_all*, :func:`_releases_of`) landed on the server AS THEY ARE
     (``ProjectSource.import_release``): a project published from a folder keeps its release
     numbers, dates and documents. A server that will not take one (an account that may not import,
     §6.7) fails the publish (:class:`ReleasesNotKept`), and the record is never written:
     nothing is lost."""
-    from .evidence_store_fs_shared import FsTree
-    from .project_tree_releases import all_records
-
-    kept_all = [kept for held in all_records(FsTree(working_copy), working_copy).values()
-                for kept in held]  # fmt: skip
     for landed, kept in enumerate(kept_all):
         try:
             source.import_release(project_id, kept, ctx)

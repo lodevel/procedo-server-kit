@@ -156,12 +156,15 @@ class State:
         calls: Iterable[str] | None = None,
         people: list[dict] | None = None,
         boards: dict[str, list[dict]] | None = None,
+        unnamed_refused: bool = False,
     ) -> None:
         self.lock = threading.RLock()
         self.users = parse_tokens(tokens)
         # The server's users U1 lists (§6.8), and the optional calls it offers (§6.1).
         self.people = offer.check_users(people)
         self.calls = offer.chosen(calls, self.people)
+        #: With U1, a run or a release naming nobody is refused (§6.8: the server's choice).
+        self.unnamed_refused = unnamed_refused
         self.blobs = BlobStore(root / "api_storage")
         self.max_upload_bytes = max_upload_bytes  # a JSON request, its parts included
         self.max_file_bytes = max_file_bytes  # one large file sent alone (B1, §3.4b)
@@ -207,7 +210,9 @@ class State:
                 made = self.ensure_board(
                     project, board["serial"], board.get("part_number"), board.get("board_revision")
                 )
-                self.registered_boards.setdefault(project_id, set()).add(made.key)
+                # the fault of 3.3.listed-taken: listed by E4, yet not registered
+                kept = self.listed_only if faults.on("3.3.listed-taken") else self.registered_boards
+                kept.setdefault(project_id, set()).add(made.key)
 
     def _add_own_storage(self, root: Path) -> None:
         """An own ``filesystem`` storage (§7.1): marked for this server (§7.2), reached, never

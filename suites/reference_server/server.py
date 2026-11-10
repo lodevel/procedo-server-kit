@@ -87,7 +87,7 @@ class Route:
     handler: Callable[[Call], Answer]
     roles: frozenset | str | None
     multipart: bool = False
-    importable: bool = False  # an importer may call it with "import": true (§5.2, §6.10)
+    importable: bool = False  # it takes "import": true (§6.7), with the importer role
     raw: bool = False  # the body is a file's bytes themselves (§3.4b)
     held_first: bool = False  # 404 for a project whose files are not here, before the body
     #: The query parameters the call defines, checked with the request's form, before the
@@ -167,7 +167,14 @@ ROUTES = (
         importable=True,
         call="E7",
     ),
-    Route("POST", (*P, "runs", "{run_id}", "delete"), runs.delete_run, OWN, call="E11"),
+    Route(
+        "POST",
+        (*P, "runs", "{run_id}", "delete"),
+        runs.delete_run,
+        OWN,
+        importable=True,
+        call="E11",
+    ),
     Route("POST", (*P, "runs", "{run_id}", "restore"), runs.restore_run, OWN, call="E11"),
     Route("GET", (*P, "boards"), boards.list_boards, ANY, query=BOARD, call="E4"),
     Route("GET", (*P, "operators"), search.list_operators, ANY, call="E16"),
@@ -223,7 +230,14 @@ ROUTES = (
         importable=True,
         call="E10",
     ),
-    Route("POST", (*P, "artifacts", "delete"), artifacts.delete_artifact, OWN, call="E12"),
+    Route(
+        "POST",
+        (*P, "artifacts", "delete"),
+        artifacts.delete_artifact,
+        OWN,
+        importable=True,
+        call="E12",
+    ),
     Route("POST", (*P, "artifacts", "restore"), artifacts.restore_artifact, OWN, call="E12"),
     Route(
         "GET",
@@ -461,6 +475,9 @@ class _Handler(BaseHTTPRequestHandler):
                     projects.held_project(call)
             if self.command == "POST":
                 self._parse_body(call, route, body)
+            if route.importable and call.import_asked():  # §6.1: an import, an optional right
+                offer.refuse_import(state.calls, route.call)
+                offer.note(offer.IMPORT)
             _check_role(route, call)
             with state.lock:
                 answer = route.handler(call)
@@ -590,7 +607,7 @@ class _Handler(BaseHTTPRequestHandler):
                     else 'Bearer error="invalid_token"'
                 },
             )
-        return user
+        return offer.granted(self.server.state.calls, user)  # §3.5: importer only with import
 
     def _parse_body(self, call: Call, route: Route, body: bytes) -> None:
         state = call.state
@@ -779,6 +796,7 @@ def start(
     calls: Iterable[str] | None = None,
     users: list[dict] | None = None,
     boards: dict[str, list[dict]] | None = None,
+    unnamed_refused: bool = False,
 ) -> tuple[str, ReferenceServer]:
     """Serve the JSON API on 127.0.0.1, a free port. ``tokens``: ``{token: [roles]}``.
 
@@ -795,6 +813,8 @@ def start(
     ``{project_id: [{"serial", "part_number"?, "board_revision"?}]}``: given, ``/info`` says
     ``boards_registered: true``, E4 lists them before any run and E1 refuses a run on any other
     (``409 unknown_board``); None (the default), any serial run becomes a board (§3.3).
+    ``unnamed_refused``: with U1, a run or a release naming nobody is refused ``409
+    unknown_operator`` (§6.8, the server's choice); taken by default.
     """
     state = State(
         Path(tmp_path),
@@ -810,6 +830,7 @@ def start(
         calls=calls,
         people=users,
         boards=boards,
+        unnamed_refused=unnamed_refused,
     )
     server = ReferenceServer(state)
     server.thread = threading.Thread(

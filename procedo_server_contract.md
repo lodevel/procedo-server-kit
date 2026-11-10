@@ -17,6 +17,7 @@ without it. Every rule stated without a level is a MUST.
 
 Contents:
 
+0. [Before you start: what you must, may and choose](#0-before-you-start-what-you-must-may-and-choose)
 1. [What the server is for](#1-what-the-server-is-for)
 2. [Conventions](#2-conventions)
 3. [Address, headers, discovery, authentication, transport](#3-address-headers-discovery-authentication-transport)
@@ -26,6 +27,54 @@ Contents:
 7. [File storages the app reaches itself](#7-file-storages-the-app-reaches-itself)
 8. [Conformance: checking your server](#8-conformance-checking-your-server)
 9. [The machine-readable twin](#9-the-machine-readable-twin)
+
+---
+
+## 0. Before you start: what you must, may and choose
+
+**You must** answer these core calls, each as its section says:
+
+- `GET /info`: [3.3](#33-get-apiv1info-discovery)
+- S1 `GET /storages`: [6.6](#rule-S1.storages)
+- P1 `GET /projects`: [6.3](#rule-P1.light-with-path)
+- P2, P2b `GET /projects/{project}` · `POST …/read`: [6.3](#rule-P2.whole)
+- P7 `GET /projects/{project}/tests/{test}`: [6.3](#rule-P7.one-test)
+- P9 `POST /projects/{project}/changes`: [6.3](#rule-P9.shapes)
+- P10 `POST /projects/{project}/releases/{test_id}`: [6.3](#rule-P10.only-named-files)
+- E1 `POST /projects/{project}/runs`: [6.4](#rule-E1.creates-project-board)
+- E3 `GET /projects/{project}/runs/{run_id}`: [6.4](#rule-E3.run)
+- E4 `GET /projects/{project}/boards`: [6.4](#rule-E4.list)
+- E5 `GET /projects/{project}/boards/{serial}`: [6.4](#rule-E5.board)
+- E7 `POST /projects/{project}/runs/{run_id}/annotation`: [6.4](#rule-E7.statuses)
+- E8 `GET /projects/{project}/artifacts`: [6.4](#rule-E8.filters)
+- E9 `GET /projects/{project}/artifacts/{kind}/{name}`: [6.4](#rule-E9.generation)
+- E10 `POST /projects/{project}/artifacts`: [6.4](#rule-E10.report-already)
+- B1, B2 `POST`/`GET /storages/{store_id}/blobs/{owner}/{sha256}`: [6.6](#rule-B1.upload)
+
+**You may** offer any other call, or not: the [table of 6.1](#61-every-call-at-a-glance) says
+what the app does without each.
+
+**You choose:**
+
+- who registers the boards: [`boards_registered`](#rule-3.3.info-boards-registered);
+- your users, and whether a run or release naming nobody is taken: [U1](#rule-U1.users),
+  [the absent name](#rule-U1.unnamed-choice);
+- no imports: [`import`](#rule-6.1.import-unlisted-501); the kit then skips the import's cases;
+- no project creation: [P11](#rule-6.1.create-unlisted-501); the kit then skips the cases that need
+  a fresh project (adapt the kit to check them on projects of your own);
+- who may be a manager, so who deletes: [E11–E13](#rule-6.1.manager-calls-need-a-manager);
+- your own refusals and codes: [4.1](#41-the-envelope), [409, kind `invalid`](#rule-4.3.409-own-codes);
+- no P3: [P2](#rule-P2.token-empty-without-P3);
+- a compressed part of a multipart request: [2.12](#rule-2.12.plain-json-part);
+- your storages, and the ones projects declare: [7.1](#71-your-own-file-storages),
+  [S2–S4](#rule-7.3.declared-never-cleaned);
+- your limits and retention period: [`/info` `limits`](#33-get-apiv1info-discovery);
+- purging on your own schedule too: [E13](#rule-E13.not-expired-kept);
+- a page size of your own: [E2 `limit`](#rule-E2.limit-cursor);
+- a body's `400` against a `404`: [2.13](#213-order-of-checks).
+
+**Check it** with the conformance kit ([8.2](#82-run-the-procedo-server-conformance-kit-against-your-server)). To read
+the tests and runs the app sends, see `docs/reading_a_test.md` in the kit.
 
 ---
 
@@ -254,13 +303,16 @@ in this order:
    gives twice, E17's `test` missing or empty, a request `Content-Type` the call does not take,
    a body that does not parse, a part over 1 MiB. An undefined query parameter is `400` even
    when the path names nothing the server holds.
-6. <a id="rule-2.13.role-before-item"></a>**The login's roles**: `403` (3.5). A login whose roles do not allow the call is `403`, even
+6. **An import not taken**: `501 unsupported` for an `"import": true` in the body of a call that
+   takes one, on a server not listing `import` (6.1). It needs the body read, so it comes after
+   5, and before the login's roles: whichever login sends it.
+7. <a id="rule-2.13.role-before-item"></a>**The login's roles**: `403` (3.5). A login whose roles do not allow the call is `403`, even
    when what it names does not exist.
-7. **The call's own checks**, as its section states them: what the request names (`404`) comes
+8. **The call's own checks**, as its section states them: what the request names (`404`) comes
    before what it asks against what the server holds (`409`, `422`). A body field's own `400`
-   comes after 6; against a `404` its order is the server's choice (the app never sends one).
+   comes after 7; against a `404` its order is the server's choice (the app never sends one).
 
-One call differs, as 6.1 says: **P9** looks for its project (6, then the `404` of a project known
+One call differs, as 6.1 says: **P9** looks for its project (7, then the `404` of a project known
 only by its evidence) before it reads its body, so its body's form (5) comes after them.
 
 ---
@@ -320,10 +372,10 @@ HTTP/1.1 200 OK   Date: Thu, 05 Nov 2026 12:00:00 GMT   X-Bench-Store: v1   X-Re
 | `limits.max_upload_bytes` | The largest JSON request, its parts included (6.6). Integer ≥ 1. | MUST |
 | `limits.max_file_bytes` | The largest file sent alone (B1). Integer ≥ 1. The app checks a file against it before sending. | MUST |
 | `limits.retention_days` | How long a deleted run or artifact is kept before a purge removes it, in days. 90 unless the server's administrator set another. Integer ≥ 1. | MUST |
-| <a id="rule-3.3.info-calls"></a>`calls` | The **optional** calls this server offers, by their ids in 6.1 (`"P3"`, `"E2"`, `"U1"`, …): each at most once, in any order, `[]` when it offers none. A core call is never listed: every server takes them all. An optional call not listed answers `501 unsupported` (6.1). | MUST |
-| <a id="rule-3.3.info-boards-registered"></a>`boards_registered` | Whether the server **registers its boards itself**. `false` (the usual case): any serial a bench runs becomes a board with its first run (E1). `true`: someone adds the boards on the server before they are tested. Each board of a project is then registered or not, and <a id="rule-E4.registered-listed"></a>E4 lists exactly the registered boards, no more, no less, one no run was pushed to yet included. A bench's write naming a board that is not registered is refused `409 unknown_board`, kind `invalid` (4.4), nothing written: <a id="rule-E1.unknown-board"></a>a run (E1), <a id="rule-E10.unknown-board"></a>a report or a draft (E10), <a id="rule-E15.unknown-board"></a>a board entry (E15); the outbox sets it aside. <a id="rule-3.3.listed-taken"></a>On a registered board none of them is ever refused so: a board E4 lists and a bench's write refuses `unknown_board` is a broken server. The app then lets a bench pick a board only from E4's list. <a id="rule-E1.unknown-board-exempt"></a>Not refused so: an imported run (`"import": true`, 6.7), <a id="rule-3.3.import-any-call"></a>and an imported report, draft or board entry alike (E10, E15), <a id="rule-3.3.import-registers"></a>whose board, when new, becomes registered (E4 lists it from then on, and a bench's write on it is taken), the one way a board is registered through these calls; a replay of a run or a report already stored. | MUST |
+| <a id="rule-3.3.info-calls"></a>`calls` | The **optional** calls this server offers, by their ids in 6.1 (`"P3"`, `"E2"`, `"U1"`, …), and `"import"` when it takes imports (6.1, 6.7): each at most once, in any order, `[]` when it offers none. A core call is never listed: every server takes them all. An optional call not listed answers `501 unsupported` (6.1). | MUST |
+| <a id="rule-3.3.info-boards-registered"></a>`boards_registered` | Whether the server **registers its boards itself**. `false` (the usual case): any serial a bench runs becomes a board with its first run (E1). `true`: someone adds the boards on the server before they are tested. Each board of a project is then registered or not, and <a id="rule-E4.registered-listed"></a>E4 lists exactly the registered boards, no more, no less, one no run was pushed to yet included. A bench's write naming a board that is not registered is refused `409 unknown_board`, kind `invalid` (4.4), nothing written: <a id="rule-E1.unknown-board"></a>a run (E1), <a id="rule-E10.unknown-board"></a>a report or a draft (E10), <a id="rule-E15.unknown-board"></a>a board entry (E15); the outbox sets it aside. <a id="rule-3.3.listed-taken"></a>On a registered board none of them is ever refused so: a board E4 lists and a bench's write refuses `unknown_board` is a broken server. The app then lets a bench pick a board only from E4's list. <a id="rule-E1.unknown-board-exempt"></a>Not refused so: an imported run (`"import": true`, 6.7), <a id="rule-3.3.import-any-call"></a>and an imported report, draft or board entry alike (E10, E15), <a id="rule-3.3.import-registers"></a>whose board, when new, becomes registered (E4 lists it from then on, and a bench's write on it is taken), the one way a board is registered through these calls (a server not listing `import` registers its boards its own way only); a replay of a run or a report already stored. | MUST |
 | `user.name` | The login's name. | MUST |
-| <a id="rule-3.3.info-roles"></a>`user.roles` | The login's roles, from `bench`, `publisher`, `importer`, `manager`, `reader` (3.5). | MUST |
+| <a id="rule-3.3.info-roles"></a>`user.roles` | The login's roles, from `bench`, `publisher`, `importer`, `manager`, `reader` (3.5); `importer` only on a server listing `import` in `calls`. | MUST |
 | <a id="rule-3.3.info-token-expires"></a>`user.token_expires` | When the token stops working (time). The app warns within 14 days of it. | SHOULD |
 
 <a id="rule-3.3.info-401-public"></a>**Without a token it still answers**, and that answer matters: `401`, `WWW-Authenticate:
@@ -367,7 +419,7 @@ the data itself (`machine_id`), never by the login.
 |---|---|
 | `bench` | Every read. P9, P10, P11. E1, E6, E7, E10, E15. L3 for an item with no code. S2, S3, S4. B1. |
 | `publisher` | Every read. L3 for any item, code included. B1 for owner `library`. |
-| <a id="rule-import.never-restore-purge"></a>`importer` | Every read. With `"import": true` in the body: E1, E6, E7, E10, E15, P10, and the deletes of E11 and E12, keeping the server-set fields sent (6.7). B1 for a project's file. **Never** a restore or a purge. The right to move data in: the administrator gives it to the account that does the move, beside its other roles, and takes it back afterwards or not, as they choose. |
+| <a id="rule-import.never-restore-purge"></a>`importer` | Every read. With `"import": true` in the body: E1, E6, E7, E10, E15, P10, and the deletes of E11 and E12, keeping the server-set fields sent (6.7). B1 for a project's file. **Never** a restore or a purge. The right to move data in: the administrator gives it to the account that does the move, beside its other roles, and takes it back afterwards or not, as they choose. Only on a server listing `import` in `/info`'s `calls` (6.1): <a id="rule-3.5.importer-only-with-import"></a>one not taking imports grants it to no login, and its `/info` never names it. |
 | <a id="rule-3.5.manager-only-no-push"></a>`manager` | Every read. E11, E12, E13. A login holding only this role cannot push a run. A server where no login can hold it does not offer E11–E13 (6.1). |
 | `reader` | Every read. |
 
@@ -1210,7 +1262,7 @@ All paths are under `<base>api/v1`, with `Authorization: Bearer <token>`. `{proj
 | P8b | `GET /projects/{project}/releases/{test_id}/{version}` · `POST …/{version}/read` | any | optional | 6.3 |
 | P9 | `POST /projects/{project}/changes` | bench | core | 6.3 |
 | P10 | `POST /projects/{project}/releases/{test_id}` | bench; importer with `import` | core | 6.3 |
-| P11 | `POST /projects` | bench | core | 6.3 |
+| P11 | `POST /projects` | bench | optional | 6.3 |
 | E1 | `POST /projects/{project}/runs` | bench; importer with `import` | core | 6.4 |
 | E2 | `GET /runs` | any | optional | 6.4 |
 | E3 | `GET /projects/{project}/runs/{run_id}` · `POST …/runs/{run_id}/read` | any | core | 6.4 |
@@ -1238,10 +1290,13 @@ All paths are under `<base>api/v1`, with `Authorization: Bearer <token>`. `{proj
 | B1 | `POST /storages/{store_id}/blobs/{owner}/{sha256}` | bench, importer (a project's); bench, publisher (`library`) | core | 6.6 |
 | B2 | `GET /storages/{store_id}/blobs/{owner}/{sha256}` | any | core | 6.6 |
 | U1 | `GET /users` | any | optional | 6.8 |
+| import | `"import": true` in the body of E1, E6, E7, E10, E15, P10 and the deletes of E11 and E12 | importer | optional | 6.7 |
+
+"importer with `import`" and "importer (a project's)" hold only on a server listing `import`:
+one that does not grants no login the role `importer` (3.5).
 
 **Core and optional calls.** <a id="rule-6.1.core-calls"></a>Every server takes the **core**
-calls: `/info`, S1, P1, P2 (and P2b), P7, P9, P10, P11, E1, E3, E4, E5, E7, E8, E9, E10, B1 and
-B2. With them alone the app creates, opens, syncs and pushes a project, releases a test, pushes
+calls, marked so in the table and listed in [0](#0-before-you-start-what-you-must-may-and-choose). With them alone the app opens, syncs and pushes a project, releases a test, pushes
 runs with their files, reads a board's runs back, comments a run and changes its verdict by hand
 (E7), and makes, pushes, lists and opens reports, exports and drafts (E8, E9, E10). Every other
 call is **optional**: a server offers those it chooses, by their ids above, and lists them in `/info`'s `calls` (3.3). <a id="rule-6.1.unlisted-501"></a>An optional
@@ -1249,11 +1304,19 @@ call the server does not list answers `501 unsupported`, kind `invalid` (4.3), a
 not have: never `404` (proof that an item is absent) and never served. A call it lists follows
 every rule of its section. The app sends an optional call only to a server listing it.
 
+**Imports are optional too**, by the id `import`: only a server listing it in `calls` takes data
+moved in as it was (6.7). A server that does not list it grants no login the role `importer`
+(3.5) and <a id="rule-6.1.import-unlisted-501"></a>answers an `"import": true` on **every** call
+that takes one (E1, E6, E7, E10, E15, P10, the deletes of E11 and E12) `501 unsupported`, kind
+`invalid`, as an optional call it does not list: nothing written, whichever login sends it. The
+app never sends one there.
+
 What each group of optional calls gives the app; the app offers a feature only when the server
 lists every call of its group:
 
 | Optional calls | What the app does with them | Without them |
 |---|---|---|
+| P11 | **Creating projects** (owner, 2026-11-10: optional): a project made on a PC published to the server (New Project on it, Move or Copy Project onto it). <a id="rule-6.1.create-unlisted-501"></a>A server not listing P11 answers it `501 unsupported`, kind `invalid`, nothing created (P1 does not list it, P2 answers `404`). | No project is created on this server through the app: it greys publishing a project there, saying why. Its projects come into being by the server's own means; a run pushed to a project it does not hold still makes an evidence-only project (6.1). |
 | P3 | Syncs a project by what changed since its last read. | Each sync pass reads the whole project (P2); every token is `""` (P2). |
 | P4, P5, P6 | Lists a project's tests; reads several tests in one request. | Reads a test by its name (P7), or the whole project. |
 | P8, P8b | Lists a test's releases and reads one release alone. | Reads them with the project (P2 holds every release). |
@@ -1264,6 +1327,7 @@ lists every call of its group:
 | L1, L2, L3 | **The library**: bundles, configurations, templates and equipment packs shared through the server. | No library on this server. |
 | S2, S3, S4 | **A project's own storage** (7.3): files kept in a storage the server does not use. | A project's files go to the server's own storages only. |
 | U1 | **The server's users**: a bench picks the operator from them; the server checks each run's `operator` and each release's `released_by` (6.8). | Any name, as typed. |
+| import | **Moving data in** (6.7): a project's evidence and its releases moved onto the server as they were (each run's dates, the report and release numbers, what was deleted). | Nothing is moved onto this server as it was: the app greys Move evidence and Copy evidence onto it, saying why, and refuses, before anything is written, to move or publish a project holding releases there (they would be lost). |
 
 **Rules shared by many calls:**
 
@@ -1548,6 +1612,8 @@ The server:
 "released_at", "released_by", …}`). A release is never changed afterwards.
 
 #### P11 · `POST /projects`
+
+Optional (6.1): a server not listing it answers `501 unsupported`, nothing created.
 
 <a id="rule-P11.create"></a>A new project. Role: `bench`. Body: a Project (`format_version`, `project_id`, `name`, `files`,
 optional `bundle`, optional `drafts`) + parts. `config/config.json` among the files holds the
@@ -1999,6 +2065,10 @@ went in. Some fields are normally set by the server, never by a client:
 
 An import carries them as they were.
 
+**Imports are optional** (6.1): only a server listing `import` in `/info`'s `calls` takes one. A
+server that does not list it never grants the `importer` role and answers every `"import": true`
+`501 unsupported`, nothing written (6.1); the app moves nothing onto it as it was.
+
 - <a id="rule-import.role-and-flag"></a>**A login with the `importer` role** may send those fields on E1, E6, E7, E10, E15, P10 and the
   deletes of E11 and E12, with `"import": true` in the body. The server stores them as sent,
   instead of stamping its own.
@@ -2028,9 +2098,10 @@ Per call:
 - <a id="rule-import.bench-seen-not-imported"></a>**Not data:** a Bench's `first_seen` and `last_seen` are the server's record of the requests it
   received, an import's included. An import neither carries nor keeps them.
 - **The way out** is the reads: every call already answers those fields.
-- **What an import needs.** Each kind of data moves by its own call: a server that does not list
-  an optional call (6.1) takes none of what it carries (no pointer set as sent without E6: the
-  server picks it, above; no board entry without E15, no deleted run without E11).
+- **What an import needs.** `import` in `/info`'s `calls` first. Then each kind of data moves by
+  its own call: a server that does not list an optional call (6.1) takes none of what it carries
+  (no pointer set as sent without E6: the server picks it, above; no board entry without E15, no
+  deleted run without E11).
 
 ### 6.8 The server's users
 
@@ -2054,11 +2125,15 @@ Optional (6.1). Any login. <a id="rule-U1.users"></a>Answer: the server's **acti
 U1 holds a run's `operator` (E1) and a release's `released_by` (P10) to its users: a name that is
 not the `name` of a user U1 lists now, compared by case folding (2.4), is refused with `409
 unknown_operator`, kind `invalid` (the outbox sets that entry aside), and nothing is written.
-<a id="rule-U1.operator-exempt"></a>Not checked:
+<a id="rule-U1.unnamed-choice"></a>**An absent `operator` or `released_by`** is the server's
+choice (owner, 2026-11-10): it takes the run or the release, or refuses it the same way, `409
+unknown_operator`, kind `invalid`, nothing written. The app never sends one to a server listing
+U1 (Bench waits for the operator, Studio for who releases). Never checked:
 
-- an absent `operator` or `released_by`: allowed, as on any server;
-- an import (`"import": true`, 6.7): a name recorded long ago may be no user now;
-- a replay of a run already stored: `already`, whatever the list holds now.
+- <a id="rule-U1.import-exempt"></a>an import (`"import": true`, 6.7): a name recorded long
+  ago may be no user now;
+- <a id="rule-U1.operator-exempt"></a>a replay of a run already stored: `already`, whatever the
+  list holds now.
 
 The name is kept as sent (a record, 2.4). A server that does not list U1 checks no name.
 
@@ -2207,7 +2282,8 @@ hold:
 7. A name holding `/`, `#`, `+`, a blank or a character outside ASCII, sent as a path segment or a
    query value, reaches the server as that one name.
 8. Every core call is taken (6.1). Each optional call `/info` lists follows its section; each one
-   it does not list answers `501 unsupported`. A server offering no optional call is conformant.
+   it does not list answers `501 unsupported`, and so does an `"import": true` when `import` is not
+   listed. A server offering no optional call is conformant.
 
 ### 8.2 Run the Procedo server conformance kit against your server
 
@@ -2258,8 +2334,10 @@ skipped against yours, saying why.
 kit reads `/info`'s `calls` and skips each case making an optional call your server does not list,
 naming the call; the kit ships the list of the optional calls each case makes. A case that runs
 and fails fails: nothing is skipped afterwards. One case checks that each call not listed answers
-`501 unsupported`. Every rule of the core calls keeps a case making core calls only, so it is
-checked on every server.
+`501 unsupported`, and that an `"import": true` does too when `import` is not listed, nothing
+written. Every rule of the core calls keeps a case making core calls only, so it is checked on
+every server, except those needing a fresh project or an import: their cases are skipped where
+P11 or `import` is not listed ([0](#0-before-you-start-what-you-must-may-and-choose)).
 
 **A server registering its boards** (`boards_registered: true`, 3.3) refuses the writes the kit
 makes on boards of its own (a run, a report, a board entry). Given the importer's token, the kit
@@ -2272,6 +2350,11 @@ so. Such a run is always the kit's own: test id `ffffffff-ffff-4fff-bfff-fffffff
 `0000feed`; the boards it registers stay. Run the kit against a test instance. Register at least
 one board in a project you name in `PROCEDO_KIT_BOARDS_PROJECT`: its cases check E4 lists its
 boards, a write on a board it does not list is refused, and one on a board it lists is taken.
+
+A server registering its boards and **not listing `import`** gives the kit no way to make a
+board: the kit says so once as it starts ("this server registers its boards and takes no import:
+the cases that need a fresh board are skipped") and skips those cases with that reason, whatever
+token is set. The kit needs imports to check such a server fully.
 
 The kit's `README.md` has the details: how to read a failure, the cases skipped against your
 server, and the checks to make by hand (HTTPS, `Retry-After`, names holding `/`, `#` or `+` in

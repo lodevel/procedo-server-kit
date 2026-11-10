@@ -147,14 +147,22 @@ class ApiWire:
         body: dict[str, Any] | bytes | None = None,
         parts: list[Part] | None = None,
         token: str | None = None,
+        importing: bool = False,
     ) -> Answer:
         """One call of the contract (``op`` is its operationId: what a log line and a refusal
         name). ``segments`` are the path below ``/api/v1``, each quoted on its own; ``parts``
         makes the body multipart; ``token`` replaces the store's login for this call alone
         (a manager's, asked for at the moment). An optional call this server's ``/info`` does
-        not list is refused here, nothing sent (contract §6.1, :func:`server_offer.refused`)."""
+        not list is refused here, nothing sent (contract §6.1, :func:`server_offer.refused`);
+        so is an import (*importing*: a body sent as bytes says ``"import": true``; a dict body
+        is read for it) to a server not listing ``import``."""
         info = self.wire.read_info()
-        why = server_offer.refused(op, query, body, offered_calls(info)) if info else ""
+        calls = offered_calls(info) if info else None
+        why = (
+            server_offer.refused(op, query, body, calls, importing=importing)
+            if calls is not None
+            else ""
+        )
         if why:
             raise EvidenceError("invalid", why, code=server_offer.UNSUPPORTED)
         url = self.wire.api("/".join(quote(str(s), safe="") for s in segments))

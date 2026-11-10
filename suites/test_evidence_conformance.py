@@ -47,7 +47,13 @@ import local_zone
 import pytest
 from test_evidence_board_layout import AX_B, AX_C, BARE, PID, T12, WHY, folder_backend
 
-from procedo.core import evidence_draft, evidence_local_staging, evidence_store_fs_shared, utc_time
+from procedo.core import (
+    evidence_draft,
+    evidence_local_staging,
+    evidence_outbox,
+    evidence_store_fs_shared,
+    utc_time,
+)
 from procedo.core.annotation_entries import (
     ALREADY,
     CHANGED,
@@ -838,6 +844,42 @@ def _sidecar(store, kind: str, key: str, name: str) -> bytes:
     return side.read_bytes()
 
 
+@dataclass
+class _MovedAhead:
+    """What :func:`_staged_a_second_later` moved: each stamp its clock gave, each staged file
+    whose time it set."""
+
+    stamped: list[datetime] = field(default_factory=list)
+    files: list[Path] = field(default_factory=list)
+
+
+def _staged_a_second_later(monkeypatch) -> _MovedAhead:
+    """An artifact staged in the outbox from now on is staged a second later than the real
+    clock: its stamp (the time the web server's push sends as ``updated_at``, to the second)
+    and the time of each file it stages (the payload's time, which a storage keeping file times
+    copies, and the database keeps) are both one second ahead. So whatever is staged now is in
+    a later second than anything staged before, on every storage.
+    ``test_evidence_store_api`` crosses that second on the real clock once, on the web server."""
+    moved = _MovedAhead()
+    write = evidence_outbox._write_file
+
+    class Later(datetime):
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[override]
+            moved.stamped.append(datetime.now(tz) + timedelta(seconds=1))
+            return moved.stamped[-1]
+
+    def written_later(path: Path, payload: bytes | str, tag: str) -> None:
+        write(path, payload, tag)
+        later = time.time() + 1
+        os.utime(path, (later, later))
+        moved.files.append(Path(path))
+
+    monkeypatch.setattr(evidence_outbox, "datetime", Later)
+    monkeypatch.setattr(evidence_outbox, "_write_file", written_later)
+    return moved
+
+
 @conformance(
     "write_artifact", "read_artifact", "list_artifacts", "list_generations", "read_generation",
     rules=(
@@ -857,9 +899,14 @@ def reports_and_exports_keep_every_generation(s: Storage, monkeypatch) -> None:
             _send(store, "report", key, "r.html", data, sidecar)
     # The same again, saved on the bench a second later: its ``updated_at`` differs, and a
     # store compares only the file and its record (contract §5.10, E10).
-    time.sleep(1.1)
-    for key in BOARDS:
-        _send(store, "report", key, "r.html", *_report(key, 2)[:2])
+    with monkeypatch.context() as m:
+        moved = _staged_a_second_later(m)
+        for key in BOARDS:
+            stamps, files = len(moved.stamped), len(moved.files)
+            _send(store, "report", key, "r.html", *_report(key, 2)[:2])
+            assert len(moved.stamped) > stamps and len(moved.files) > files, (
+                f"the resend on {key} was not staged a second later"
+            )
     exports = [_export(i) for i in range(2)]
     for data, meta in exports:
         _send(store, "export", "", "e.docx", data, meta)

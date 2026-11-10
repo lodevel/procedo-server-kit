@@ -1,5 +1,7 @@
 # Procedo server conformance kit
 
+Start with §0 of `procedo_server_contract.md`: what you must, may and choose.
+
 This kit checks that a server follows the Procedo server contract
 (`procedo_server_contract.md`, with its machine-readable twin `procedo_api.openapi.yaml`). Run
 it against your own implementation: when every case passes, the Procedo app can use your
@@ -101,7 +103,7 @@ Give the kit two logins on your server, each with a token:
 |---|---|---|
 | a bench login | `bench` and `publisher` | every write but the managers' ones, publishing library items |
 | a manager login | `manager` | deleting, restoring and purging runs and artifacts |
-| an importer login (optional) | `importer` only | moving data in (§6.7), and uploading a project's file (B1); `importer` alone, so the cases can tell the import's writes from a bench's |
+| an importer login (optional) | `importer` only | moving data in (§6.7), and uploading a project's file (B1); `importer` alone, so the cases can tell the import's writes from a bench's. Only on a server listing `import` in `/info`'s `calls` (§6.1): one that does not grants no login this role |
 | a mover login (optional) | `bench` and `importer` | the login the app moves a project's data in with: the right to move held beside `bench` (§3.5); the cases moving data in through the app's own client (a release moved in, the evidence's moves) sign in with it |
 | a bench-only login (optional) | `bench` only, no `publisher` | telling a bench from a publisher (L3 with code, B1 for the library) |
 
@@ -146,6 +148,11 @@ writing on a board as a bench is skipped before it runs, naming `PROCEDO_KIT_IMP
 (most of the evidence cases). You register no board for these: the cases use boards and
 projects of their own. Run it against a test instance only: the boards it used stay registered,
 and without E11 and E13 the imported runs stay too ("What the kit leaves on your server").
+**Imports are needed too**: if your server does not list `import` in `/info`'s `calls` (§6.1),
+the kit has no way to make a board on it. It says so once as it starts ("this server registers
+its boards and takes no import: the cases that need a fresh board are skipped") and skips each
+of those cases with that reason, whatever token is set: nothing fails for it, and nothing passes
+without being checked. The kit needs imports to check a server registering its boards fully.
 
 Register at least one board in one project yourself and name that project in
 `PROCEDO_KIT_BOARDS_PROJECT` (below): the cases check E4 lists its boards; a run, a report and a
@@ -164,7 +171,7 @@ Set these environment variables, then run `python -m pytest` from the kit's fold
 | `PROCEDO_KIT_SERVER` | Your server's base address, as a user would type it in the app: `https://host/prefix/` (the trailing slash is optional). The kit adds `api/v1/`. |
 | `PROCEDO_KIT_BENCH_TOKEN` | The bench login's token. |
 | `PROCEDO_KIT_MANAGER_TOKEN` | The manager login's token. |
-| `PROCEDO_KIT_IMPORTER_TOKEN` | Optional: the importer login's token. Unset, the import's cases are skipped, saying so. **Required for the full kit on a server registering its boards**: the kit registers its boards with it; unset there, every case pushing a bench's run is skipped too. |
+| `PROCEDO_KIT_IMPORTER_TOKEN` | Optional: the importer login's token. Unset, the import's cases are skipped, saying so. **Required for the full kit on a server registering its boards**: the kit registers its boards with it; unset there, every case pushing a bench's run is skipped too. Of no use on a server not listing `import`: no login holds the role there. |
 | `PROCEDO_KIT_MOVER_TOKEN` | Optional: the mover login's token. Unset, the cases needing it are skipped, saying so. |
 | `PROCEDO_KIT_BENCH_ONLY_TOKEN` | Optional: the bench-only login's token. Unset, the two cases needing it are skipped, saying so. |
 | `PROCEDO_KIT_BOARDS_PROJECT` | Only for a server registering its boards: the `project_id` of a project holding at least one board registered on it. Unset there, the case needing it is skipped, saying so. |
@@ -187,8 +194,8 @@ the words), `--lf` (only the cases that failed last time), `-v` (one line per ca
 
 ### A server offering some optional calls only
 
-Every server takes the core calls (contract §6.1: `/info`, S1, P1, P2, P2b, P7, P9, P10, P11, E1,
-E3, E4, E5, E7, E8, E9, E10, B1, B2); every other call is optional. Your `/info` lists those you
+Every server takes the core calls (contract §0); every other call is optional, P11 (creating a
+project) included. Your `/info` lists those you
 offer in `calls`, and every other one answers `501 unsupported`, kind `invalid`. The kit reads
 that list before any case runs:
 
@@ -199,8 +206,27 @@ that list before any case runs:
   each case makes (recorded against the reference server offering every call); a case that
   makes an optional call only when your server lists it is not in that list and runs;
 - a case that runs and fails, fails: nothing is skipped after it ran;
-- every rule of the core calls keeps a case making core calls only, so every core rule is
-  checked on your server whatever it offers.
+- every rule of the core calls keeps a case making core calls only, so it is checked on your
+  server whatever it offers, except those needing a fresh project or an import (contract §0:
+  without P11 or `import`, their cases are skipped).
+
+**A server not offering P11** (creating projects, §6.1): the kit has no way to make the fresh
+project most project cases start from. It says so once at the end of the run ("this server does
+not offer creating projects (P11 not in /info's calls): the cases that need a fresh project are
+skipped", also under `-q`) and skips each of those cases with that reason: nothing fails for it,
+and nothing passes without being checked. `test_server_contract_calls.py` checks P11 is then
+`501 unsupported` and creates nothing. What it then does not check: the project calls' rules
+(P2–P10 on a project of the kit's own: changes, releases, tests and drafts, the project's
+paths and names), and every case whose fixture creates a project; the evidence cases, which make
+their projects by pushing runs (§6.1, a project known only by its evidence), still run.
+
+**Imports are optional too** (§6.1, §6.7), by the id `import` in `calls`. Without it your server
+grants no login the role `importer` and answers every `"import": true` `501 unsupported`, nothing
+written: `test_server_contract_calls.py` checks that. What the kit then does not check: the cases
+of the import (§6.7: the server-set fields kept, the pointers set as sent, imported deletes,
+releases and board entries), of a login holding `importer` beside `bench` (§3.5), of B1 from an
+importer, and of a release moved in through the app's client; each is skipped, naming `import`.
+On a server registering its boards it also loses every case that needs a fresh board (above).
 
 Without P3, every change token you answer is `""` (the app then reads the whole project at each
 sync); with it, none is. Without U1 or S2–S4, nothing else changes.
@@ -286,7 +312,9 @@ case against `serve_reference.py`, and compare the two servers' answers to the s
 | `test_server_contract_projects.py` `test_a_damaged_blob_is_missing_and_the_bytes_sent_again_replace_it` | It damages a blob on the reference server's own disk. |
 | `test_server_contract_projects.py` `test_b1_is_held_to_max_file_bytes_never_to_max_upload_bytes` | It needs the server's limits set small. |
 | `test_server_contract_projects.py`, the cases of the import (§6.7) and `test_b1_takes_a_projects_bytes_…` | Only when `PROCEDO_KIT_IMPORTER_TOKEN` is not set. |
-| Every case pushing a bench's run | Only on a server registering its boards (§3.3) when `PROCEDO_KIT_IMPORTER_TOKEN` is not set: the kit registers its boards with it. |
+| Every case pushing a bench's run | Only on a server registering its boards (§3.3) when `PROCEDO_KIT_IMPORTER_TOKEN` is not set: the kit registers its boards with it; or when your server does not list `import`: the kit cannot make a board there ("this server registers its boards and takes no import"). |
+| Every case needing a fresh project of its own (P11) | When your server does not list P11 in `/info`'s `calls` (§6.1): "this server does not offer creating projects". |
+| The cases of the import (§6.7), of the role `importer` (§3.5) and `a_release_moved_in_lands_as_it_was` | When your server does not list `import` in `/info`'s `calls` (§6.1), each naming `import`. |
 | `test_server_contract_projects.py` `test_only_a_publisher_publishes_an_item_holding_code`, `test_b1_takes_a_projects_bytes_…` | Only when `PROCEDO_KIT_BENCH_ONLY_TOKEN` is not set. |
 | `test_project_conformance.py` `a_release_moved_in_lands_as_it_was` | Only when `PROCEDO_KIT_MOVER_TOKEN` is not set: a release moved in (P10 with `"import": true`) needs the importer role beside `bench`. |
 | `test_server_contract_conventions.py`: the cases sending a file as a part (no part of an answer encoded, `416`, `422`, a part over 1 MiB, `missing_files`, a library version) | They need a storage of backend `api` (`GET /storages`); a server keeping no byte itself skips them, saying so. |
@@ -491,6 +519,10 @@ when it works.
 other projects' data through crafted requests, rate limits, the hosting) is the server team's
 own job. The kit checks the contract's logins and roles (`401`, `403`, who may write, delete,
 publish, import), nothing more.
+
+## Reading the tests and runs your server stores
+
+A server that reads tests or runs (a test's steps, how each step went): `docs/reading_a_test.md`.
 
 ## What is in the kit
 

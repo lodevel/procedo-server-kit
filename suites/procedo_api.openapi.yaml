@@ -13,12 +13,10 @@ info:
     Rules a server developer reads first (data_format.md §1):
 
     - GET reads, POST writes; nothing else.
-    - Core and optional calls (contract §6.1): every server takes `/info`, S1, P1, P2, P2b, P7,
-      P9, P10, P11, E1, E3, E4, E5, E7, E8, E9, E10, B1 and B2. Every other call is optional: a
-      server lists those it offers in `/info`'s `calls`, and answers each one it does not list
-      `501 unsupported`, kind `invalid`. Without P3 every change token is `""`; with U1 a run's
-      `operator` and a release's `released_by` name one of the server's users (`409
-      unknown_operator`).
+    - Core and optional calls: contract §0 lists the core calls every server takes and what a
+      server chooses; §6.1, what the app does without each optional call. A server lists the
+      optional calls it offers in `/info`'s `calls`, and answers each one it does not list
+      `501 unsupported`, kind `invalid`.
     - JSON carries the structure. A file is a reference `{version|sha256, size, store_id}` to a
       storage (`GET /storages`). For a storage whose backend is `api`, the bytes are binary
       parts of the SAME request (`multipart/form-data`) or answer (`multipart/mixed`), each part
@@ -111,7 +109,8 @@ paths:
       description: |
         Also tells the app this login's roles (`bench`, `publisher`, `importer`, `manager`,
         `reader`) and the optional calls this server offers (`calls`, contract §6.1): an optional
-        call it does not list answers `501 unsupported`, kind `invalid`.
+        call it does not list answers `501 unsupported`, kind `invalid`; so does an
+        `"import": true` where `calls` does not list `import`.
       responses:
         "200":
           description: The server's name, its API versions, its clock, its limits, its optional calls and this login.
@@ -325,9 +324,9 @@ paths:
         The users the server lets work now, ordered by `display_name`, then by `name`, each
         compared by case folding. A server listing U1 in `/info`'s `calls` refuses a run whose
         `operator` (E1) or a release whose `released_by` (P10) is none of these names (compared
-        by case folding) with `409 unknown_operator`, kind `invalid`, nothing written; an absent
-        name, an import (`"import": true`) and a replay of a stored run are not checked. No
-        parameter: any is `400 bad_request`.
+        by case folding) with `409 unknown_operator`, kind `invalid`, nothing written. An absent
+        name is the server's choice (contract `U1.unnamed-choice`); an import and a replay of a
+        stored run are not checked. No parameter: any is `400 bad_request`.
       responses:
         "200":
           description: The active users.
@@ -1039,8 +1038,9 @@ paths:
       operationId: listBoards
       summary: E4 - the project's boards, without entries
       description: |
-        Each filter is optional: absent, any; empty, none. Bench's revision list asks with the
-        part number, its serial list with both. Ordered by part number, then revision, then
+        Each filter is optional: absent, any; empty, none. Bench asks with none and sorts the
+        boards on its side: on a server registering its boards, its Part number, Revision and
+        Serial are picked from that one list. Ordered by part number, then revision, then
         serial, each ascending by case folding, "none" first. A board is never removed: one
         whose runs are all deleted is still listed. A project the server never saw has no
         boards. On a server whose /info says `boards_registered: true` (contract §3.3), E4
@@ -1646,7 +1646,9 @@ components:
         what it may do (data_format.md §5.2). Every login reads. `importer` is the right to
         move data in, held beside a login's other roles: with `"import": true` in the body it may
         call E1, E6, E7, E10, E15, P10 and the deletes of E11 and E12, keeping the server-set
-        fields sent (§6.10); without it, a write needs the role the call names. The bench a run
+        fields sent (§6.10); without it, a write needs the role the call names. Only a server
+        listing `import` in `/info`'s `calls` grants it (contract §6.1); on any other, an
+        `"import": true` is `501 unsupported`. The bench a run
         came from is in the data, never deduced from the login.
 
         No token at all: `401` with `WWW-Authenticate: Bearer`. A malformed, expired or revoked
@@ -2173,7 +2175,7 @@ components:
           description: Only with import, importer role, the name it was released under.
         import:
           type: boolean
-          description: true for a release moved in from another storage (data_format.md §6.10).
+          description: true for a release moved in from another storage (data_format.md §6.10). Only on a server listing `import` in `/info`'s `calls` (contract §6.1); elsewhere `501 unsupported`, nothing written.
         version:
           type: integer
           minimum: 1
@@ -2396,7 +2398,7 @@ components:
           properties:
             import:
               type: boolean
-              description: true for a run moved in from another storage, sent with `pushed_at` (data_format.md §6.10).
+              description: true for a run moved in from another storage, sent with `pushed_at` (data_format.md §6.10). Only on a server listing `import` in `/info`'s `calls` (contract §6.1); elsewhere `501 unsupported`, nothing written.
     RunMultipart:
       $ref: "#/components/schemas/MultipartBody"
       description: "`json` is a Run (a RunPush, in a request); one part per api-stored file (less `have`, in an answer)."
@@ -2556,7 +2558,7 @@ components:
           items: {$ref: "#/components/schemas/AnnotationEntry"}
         import:
           type: boolean
-          description: true for entries moved in from another storage, sent with their `received_at` (data_format.md §6.10).
+          description: true for entries moved in from another storage, sent with their `received_at` (data_format.md §6.10). Only on a server listing `import` in `/info`'s `calls` (contract §6.1); elsewhere `501 unsupported`, nothing written.
     AnnotationResult:
       type: object
       required: [results]
@@ -2661,7 +2663,7 @@ components:
           properties:
             import:
               type: boolean
-              description: true for a report or export moved in from another storage, sent with its `generation` (data_format.md §6.10).
+              description: true for a report or export moved in from another storage, sent with its `generation` (data_format.md §6.10). Only on a server listing `import` in `/info`'s `calls` (contract §6.1); elsewhere `501 unsupported`, nothing written.
     ArtifactMultipart:
       $ref: "#/components/schemas/MultipartBody"
       description: "`json` is an Artifact (an ArtifactPush, in a request); its file's part for an api storage."
@@ -2760,7 +2762,7 @@ components:
           items: {$ref: "#/components/schemas/BoardEntry"}
         import:
           type: boolean
-          description: true for entries moved in from another storage, sent with their `received_at` (data_format.md §6.10).
+          description: true for entries moved in from another storage, sent with their `received_at` (data_format.md §6.10). Only on a server listing `import` in `/info`'s `calls` (contract §6.1); elsewhere `501 unsupported`, nothing written.
     BoardEntryResult:
       type: object
       required: [results]
@@ -2848,7 +2850,7 @@ components:
         machine_id: {$ref: "#/components/schemas/MachineId"}
         import:
           type: boolean
-          description: true to set the pointer exactly as sent, replaces not checked (importer role, data_format.md §6.10).
+          description: true to set the pointer exactly as sent, replaces not checked (importer role, data_format.md §6.10). Only on a server listing `import` in `/info`'s `calls` (contract §6.1); elsewhere `501 unsupported`, nothing written.
         ended:
           allOf: [{$ref: "#/components/schemas/Time"}]
           description: Only with import, the pointer's ended as the source had it (a demoted pointer's included).
@@ -2950,7 +2952,7 @@ components:
             `""`: `400 bad_request`.
         import:
           type: boolean
-          description: true for a delete moved in from another storage (data_format.md §6.10).
+          description: true for a delete moved in from another storage (data_format.md §6.10). Only on a server listing `import` in `/info`'s `calls` (contract §6.1); elsewhere `501 unsupported`, nothing written.
         deleted_at:
           allOf: [{$ref: "#/components/schemas/Time"}]
           description: Only with import, importer role (data_format.md §6.10).
@@ -3160,15 +3162,19 @@ components:
           type: array
           description: |
             The optional calls this server offers, by their ids in the contract's §6.1, each at
-            most once, in any order; `[]` for none. A core call (`/info`, S1, P1, P2, P2b, P7,
-            P9, P10, P11, E1, E3, E4, E5, E7, E8, E9, E10, B1, B2) is never listed. An optional
+            most once, in any order; `[]` for none. A core call (contract §0) is never listed.
+            An optional
             call not listed answers `501 unsupported`, kind `invalid`. Without P3, every change
             token is `""`.
             E11, E12 and E13 are listed only when some login can hold the role `manager`.
+            `import`: the server takes imports (`"import": true` on E1, E6, E7, E10, E15, P10
+            and the deletes of E11 and E12, contract §6.7). Not listed, no login holds the role
+            `importer` and an `"import": true` answers `501 unsupported`, kind `invalid`,
+            nothing written.
           uniqueItems: true
           items:
             type: string
-            enum: [P3, P4, P5, P6, P8, P8b, E2, E6, E11, E12, E13, E14, E15, E16, E17, L1, L2, L3, S2, S3, S4, U1]
+            enum: [P3, P4, P5, P6, P8, P8b, P11, E2, E6, E11, E12, E13, E14, E15, E16, E17, L1, L2, L3, S2, S3, S4, U1, import]
         boards_registered:
           type: boolean
           description: |

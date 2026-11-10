@@ -25,6 +25,7 @@ import gzip
 import hashlib
 import io
 import json
+import os
 import secrets
 import socket
 import unicodedata
@@ -1945,13 +1946,20 @@ def test_b1_takes_a_projects_bytes_from_bench_or_importer_and_the_librarys_from_
     owner = server_target.fresh_id()
     for target in (owner, "library"):
         refused(api.upload(target, binary(500), role="manager"), 403, "forbidden")
-    assert ok(api.upload(owner, binary(500), role="importer"))["status"] == "saved"
-    refused(api.upload("library", binary(500), role="importer"), 403, "forbidden")
+    if server_target.offers(api.base_url, "import"):  # the importer role: only with import
+        assert ok(api.upload(owner, binary(500), role="importer"))["status"] == "saved"
+        refused(api.upload("library", binary(500), role="importer"), 403, "forbidden")
+    elif not server_target.external() or os.environ.get(server_target.TOKENS["importer"][0]):
+        # a server taking no import grants no importer: that login uploads nothing (§3.5)
+        refused(api.upload(owner, binary(500), role="importer"), 403, "forbidden")
+    assert ok(api.upload(owner, binary(500), role="bench_only"))["status"] == "saved"
     assert ok(api.upload("library", binary(500), role="bench_only"))["status"] == "saved"
 
 
-@pytest.mark.rule("B1.max-file-413", "3.6.too-large-before-body")
-def test_a_body_over_its_limit_is_413_before_it_is_sent(api):
+@pytest.mark.rule("B1.max-file-413")
+def test_b1_over_max_file_bytes_is_413_before_it_is_sent(api):
+    """A file over ``max_file_bytes`` is refused from its head alone, for an owner no project
+    holds yet (B1 needs none: ``B1.owner-before-project``), so any server checks it."""
     limits = ok(api.get("info"))["limits"]
     owner = server_target.fresh_id()
     path = f"storages/{api.store()}/blobs/{owner}/{'a' * 64}"
@@ -1959,6 +1967,11 @@ def test_a_body_over_its_limit_is_413_before_it_is_sent(api):
     reply = api.headers_only(path, size, "application/octet-stream")
     error = refused(reply, 413, "too_large")
     assert error["details"]["max_file_bytes"] == limits["max_file_bytes"], error
+
+
+@pytest.mark.rule("3.6.too-large-before-body")
+def test_a_body_over_its_limit_is_413_before_it_is_sent(api):
+    limits = ok(api.get("info"))["limits"]
     project = api.create(a_test())
     reply = api.headers_only(
         project.path("changes"), limits["max_upload_bytes"] + 1, "application/json"
@@ -2280,9 +2293,10 @@ def an_entry(**more: Any) -> dict:
     }
 
 
-@pytest.mark.offer_aware  # E7 on any server; E15 when the server offers it
+@pytest.mark.offer_aware  # E7 on any server taking imports; E15 when the server offers it
 @pytest.mark.rule("import.E7-E15-received-at")
 def test_imported_entries_keep_their_received_at_or_none(api):
+    server_target.needs(api.base_url, "import")
     pid = server_target.fresh_id()
     run = a_run(1)
     ok(api.post(f"projects/{pid}/runs", run))

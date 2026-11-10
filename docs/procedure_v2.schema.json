@@ -1,0 +1,3521 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:procedo:schema:procedure_v2",
+  "title": "Bijective Procedure JSON v2.0.2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format_version",
+    "id",
+    "description",
+    "meta",
+    "equipment",
+    "steps",
+    "expected"
+  ],
+  "properties": {
+    "format_version": {
+      "type": "string",
+      "description": "Format version of the canonical procedure (descriptive metadata; not a pass/fail gate). Value is '2.0.1' for all procedures conforming to the 2.0.x format; pack/contract version is tracked separately in meta.rules_pack."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
+      "description": "Test identifier; mirrors the H1 id in canonical text."
+    },
+    "description": {
+      "type": "string",
+      "pattern": "^[^\\x00-\\x09\\x0B-\\x1F\\x7F-\\x9F\\u2028\\u2029]*$",
+      "description": "Description, any characters (accents, `°C`, `µ`, `±`, `≤`) but a tab, a control one (C0, DEL, C1) or a line / paragraph separator (U+2028, U+2029); may be empty or contain embedded `\\n` for multi-line. Mirrors header lines after `# <id>`."
+    },
+    "title": {
+      "type": "string",
+      "pattern": "^[^\\x00-\\x1F\\x7F-\\x9F\\u2028\\u2029]*$",
+      "description": "Optional human display title; one line, any characters (accents, `°C`, `µ`, `±`, `≤`) but a tab, a control one (C0, DEL, C1) or a line / paragraph separator (U+2028, U+2029). Absent or empty means the display name is the id."
+    },
+    "meta": {
+      "$ref": "#/$defs/Meta"
+    },
+    "equipment": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Equipment"
+      }
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Step"
+      }
+    },
+    "expected": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/Criterion"
+          },
+          {
+            "$ref": "#/$defs/Block_for"
+          },
+          {
+            "$ref": "#/$defs/Block_if"
+          },
+          {
+            "$ref": "#/$defs/Op_note"
+          }
+        ]
+      }
+    },
+    "_macros": {
+      "description": "Macro registry produced by the v2.0.2 parser. Optional; emitted only when the source contained `@LET`, `@TABLE`, or `@ALLOC` directives. Sub-keys mirror the three macro kinds; each maps a name (lowercase identifier) to its structured payload. Round-trip provenance: emitter does NOT reconstruct macro form from this field on JSON->text — the macro nodes inside `steps[]` / `expected[]` carry the authoritative form.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "lets": {
+          "type": "object",
+          "_comment": "Map of @LET-bound name -> value (number, string, boolean, or expression text).",
+          "additionalProperties": true
+        },
+        "tables": {
+          "type": "object",
+          "_comment": "Map of @TABLE name -> ordered list of row objects.",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "allocations": {
+          "type": "object",
+          "_comment": "Map of @ALLOC name -> {start: int or its text as written, count_expr: string} block descriptor.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "start",
+              "count_expr"
+            ],
+            "properties": {
+              "start": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                ]
+              },
+              "count_expr": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "allOf": [],
+  "$defs": {
+    "Meta": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "_comment_extras": "Any other key is a bench-private extra (e.g. `serial_number`, or an older procedure's `revision`): a string, kept verbatim (Canonical_Text_Procedure_v2.md, Optional keys).",
+      "_comment_required": "Each pack's Meta pin (`<key>: <name>@<version>`) joins these properties from its schema fragment's `meta_properties`, and is required by its fragment's allOf clause when its equipment is declared. The `board` and `requirement` keys are operator-supplied (Doc 02 §2.1, §2.2) and therefore omitted from `required` here — empty `board:` / `requirement:` slots in canonical text round-trip to absent meta keys in JSON. See per-spec rules in 02_Procedure_Json_Schema_v2.md §2.",
+      "required": [
+        "format_version",
+        "rules_pack"
+      ],
+      "properties": {
+        "format_version": {
+          "type": "string"
+        },
+        "board": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rules_pack": {
+          "type": "string",
+          "pattern": "^rules_packager_base@\\d+\\.\\d+\\.\\d+$"
+        },
+        "requirement": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "authored_by": {
+          "type": "string",
+          "maxLength": 200
+        }
+      }
+    },
+    "Eq_DMM_Equipment": {
+      "_comment": "The base-native `dmm`: an id and an optional model hint, no parameters. A pack claiming `dmm` replaces this entry with its own (its fragment's equipment_oneOf_refs).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^(?=.*[0-9_])[A-Z][A-Z0-9_]{0,31}$"
+        },
+        "type": {
+          "const": "dmm"
+        },
+        "model_hint": {
+          "type": "string",
+          "maxLength": 200
+        }
+      }
+    },
+    "Equipment": {
+      "_comment": "Equipment entries carry CAPABILITY/REQUIREMENT fields (a pack's per-channel ratings, a subtype) — never BENCH-IDENTIFICATION fields (visa, port, baud, timeout, remote, manual_override), which live as module constants in the generated test.py. The base declares only its own `dmm`; each pack's equipment entries join this oneOf from its schema fragment's `equipment_oneOf_refs`.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/Eq_DMM_Equipment"
+        }
+      ]
+    },
+    "Source": {
+      "enum": [
+        "operator",
+        "inserted"
+      ]
+    },
+    "Provenance": {
+      "_comment": "Phase 5 Tier C unified provenance carrier (2026-04-29 evening). Replaces the prior ad hoc `expr` + `expanded_from_range` pair on step ops. `source` discriminates how the op was authored: 'range' = generated by TOKEN[A..B] + {A..B} paired-range expansion; 'explicit' = single-line author. `source_line` is the verbatim original clause text used for emit-time collapse back to the compact form. Optional; absent on ops with no expansion lineage.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "source_line"
+      ],
+      "properties": {
+        "source": {
+          "enum": [
+            "range",
+            "explicit"
+          ]
+        },
+        "source_line": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "RationaleString": {
+      "type": "string",
+      "maxLength": 200,
+      "pattern": "^[^\\x00-\\x1F\\x7F]*$",
+      "description": "Insertion rationale: any printable Unicode (excludes ASCII control chars + DEL, so no newlines). Per Doc 01 §6.2 fix 2026-04-26: relaxed from ASCII-only because real-world rationales reference rule-doc sections (e.g. 'per §6.2')."
+    },
+    "NumberOrLoopVarRef": {
+      "_comment": "A numeric scalar field that MAY hold a `${var}` / `${row.key}` reference to a Block_for loop variable when the field appears inside a Block_for body. Outside Block_for bodies the value is always a literal number; inside, it may be a `${...}`: a name (`${name}`, `${row.key}`) or a calculation (`${i * STEP}`), its value each turn's. As of 2026-05-30 every numeric scalar field in the schema accepts this shape (the previous `NumberLiteralOnly` carve-out for timeout/probe_* fields was removed once codegen routed them through the substitution-aware `_number_expr` path). The contextual rule that string form is only permitted inside a Block_for body is enforced by the validator pass, not the schema.",
+      "oneOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "string",
+          "pattern": "^\\$\\{[^{}]*\\}$"
+        }
+      ]
+    },
+    "Block_for": {
+      "_comment": "Preserve-by-default `@FOR vars IN <iter> ... @ENDFOR` loop block. `vars` is an array of one or more loop-variable names (e.g., `[\"i\"]` for range, `[\"i\", \"row\"]` for table iteration). Body items can be Steps (when the loop sits inside `## Steps`) or Criteria (when inside `## Expected`).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "vars",
+        "iter",
+        "body"
+      ],
+      "properties": {
+        "op": {
+          "const": "block_for"
+        },
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "vars": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$"
+          }
+        },
+        "iter": {
+          "$ref": "#/$defs/Block_for_iter"
+        },
+        "body": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/Step"
+              },
+              {
+                "$ref": "#/$defs/Criterion"
+              }
+            ]
+          }
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "rationale": {
+          "$ref": "#/$defs/RationaleString"
+        }
+      }
+    },
+    "Block_for_iter": {
+      "_comment": "Discriminated by `kind`: `range` for integer `A..B`; `range_float` for floating-point `A..B STEP S`; `list` for `[v1, v2, ...]`; `table` for iterating rows of a `@TABLE` declared via Block_table; `name` for bare `@LET`-bound integer or table reference (disambiguated at codegen).",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/Block_for_iter_range"
+        },
+        {
+          "$ref": "#/$defs/Block_for_iter_range_float"
+        },
+        {
+          "$ref": "#/$defs/Block_for_iter_list"
+        },
+        {
+          "$ref": "#/$defs/Block_for_iter_table"
+        },
+        {
+          "$ref": "#/$defs/Block_for_iter_name"
+        }
+      ]
+    },
+    "Block_for_iter_table": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "table"
+      ],
+      "properties": {
+        "kind": {
+          "const": "table"
+        },
+        "table": {
+          "type": "string",
+          "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$"
+        }
+      }
+    },
+    "Range_bound_name": {
+      "_comment": "A @FOR range bound or STEP named: a @LET or @ALLOC name, `N`, or a `${...}` (`${N}`, `${N + 1}`), read by the engine.",
+      "type": "string",
+      "pattern": "^([A-Za-z_][A-Za-z0-9_]*|\\$\\{[^{}]*\\})$"
+    },
+    "Block_for_iter_range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "start",
+        "stop"
+      ],
+      "properties": {
+        "kind": {
+          "const": "range"
+        },
+        "start": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/Range_bound_name"
+            }
+          ]
+        },
+        "stop": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/Range_bound_name"
+            }
+          ]
+        },
+        "step": {
+          "type": "number",
+          "default": 1
+        }
+      }
+    },
+    "Block_for_iter_list": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "values"
+      ],
+      "properties": {
+        "kind": {
+          "const": "list"
+        },
+        "values": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "oneOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "Block_if": {
+      "_comment": "Preserve-by-default `@IF cond ... [@ELIF cond ...]* [@ELSE ...] @ENDIF` conditional block. The unified `branches` array holds each branch in source order; each entry has a `body` and (for non-else branches) a `condition`. Body items can be Steps or Criteria depending on whether the block sits in `## Steps` or `## Expected`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "branches"
+      ],
+      "properties": {
+        "op": {
+          "const": "block_if"
+        },
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "branches": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "body"
+            ],
+            "properties": {
+              "condition": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/Condition"
+                  },
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "_comment": "String/struct for @IF/@ELIF; null for @ELSE."
+              },
+              "body": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/$defs/Step"
+                    },
+                    {
+                      "$ref": "#/$defs/Criterion"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "rationale": {
+          "$ref": "#/$defs/RationaleString"
+        }
+      }
+    },
+    "Block_alloc": {
+      "_comment": "Macro node: `@ALLOC name START=<expr> COUNT=<expr>` — declares a contiguous ref-block. Emitted by parser as a top-level step before any consuming `@FOR`. `count_expr`, and a `start` other than digits, are preserved as raw expression text.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "name",
+        "start",
+        "count_expr"
+      ],
+      "properties": {
+        "op": {
+          "const": "block_alloc"
+        },
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$"
+        },
+        "start": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        },
+        "count_expr": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "Block_table": {
+      "_comment": "Macro node: `@TABLE name ... @ENDTABLE` declaring named rows used by `@FOR i, row IN <table>` and resource lookups (`${row.<key>}`). Each row is an object whose keys are arbitrary lowercase identifiers; values are scalars (string|number|boolean) carried verbatim.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "name",
+        "rows"
+      ],
+      "properties": {
+        "op": {
+          "const": "block_table"
+        },
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$"
+        },
+        "rows": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "Op_abort": {
+      "_comment": "Aborts the procedure at runtime, jumping to ## Expected evaluation and cleanup. Emitted by `@ABORT`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "op"
+      ],
+      "properties": {
+        "op": {
+          "const": "abort"
+        },
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        }
+      }
+    },
+    "Condition": {
+      "_comment": "Phase 9.6 (Doc 04 §10): a boolean condition AST. Five leaf forms (ref-vs-value compare, ref-vs-ref compare, ref bound/unbound, loop-var-vs-value compare) plus two boolean composers (AND/OR with operands list, NOT with single operand).",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/Condition_ref_compare"
+        },
+        {
+          "$ref": "#/$defs/Condition_ref_compare_ref"
+        },
+        {
+          "$ref": "#/$defs/Condition_ref_status"
+        },
+        {
+          "$ref": "#/$defs/Condition_var_compare"
+        },
+        {
+          "$ref": "#/$defs/Condition_bool_op"
+        },
+        {
+          "$ref": "#/$defs/Condition_bool_not"
+        }
+      ]
+    },
+    "Condition_ref_compare": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "op",
+        "value"
+      ],
+      "properties": {
+        "kind": {
+          "const": "ref_compare"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "op": {
+          "enum": [
+            "lt",
+            "lte",
+            "eq",
+            "ne",
+            "gte",
+            "gt"
+          ]
+        },
+        "value": {
+          "type": "number"
+        },
+        "unit": {
+          "type": "string"
+        }
+      }
+    },
+    "Condition_ref_compare_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "lhs_ref",
+        "op",
+        "rhs_ref"
+      ],
+      "properties": {
+        "kind": {
+          "const": "ref_compare_ref"
+        },
+        "lhs_ref": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "op": {
+          "enum": [
+            "lt",
+            "lte",
+            "eq",
+            "ne",
+            "gte",
+            "gt"
+          ]
+        },
+        "rhs_ref": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "Condition_ref_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "status"
+      ],
+      "properties": {
+        "kind": {
+          "const": "ref_status"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "status": {
+          "enum": [
+            "bound",
+            "unbound"
+          ]
+        }
+      }
+    },
+    "Condition_var_compare": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "var",
+        "op",
+        "value"
+      ],
+      "properties": {
+        "kind": {
+          "const": "var_compare"
+        },
+        "var": {
+          "type": "string",
+          "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$"
+        },
+        "op": {
+          "enum": [
+            "lt",
+            "lte",
+            "eq",
+            "ne",
+            "gte",
+            "gt"
+          ]
+        },
+        "value": {
+          "type": "number"
+        }
+      }
+    },
+    "Condition_bool_op": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "op",
+        "operands"
+      ],
+      "properties": {
+        "kind": {
+          "const": "bool_op"
+        },
+        "op": {
+          "enum": [
+            "and",
+            "or"
+          ]
+        },
+        "operands": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/Condition"
+          }
+        }
+      }
+    },
+    "Condition_bool_not": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "operand"
+      ],
+      "properties": {
+        "kind": {
+          "const": "bool_not"
+        },
+        "operand": {
+          "$ref": "#/$defs/Condition"
+        }
+      }
+    },
+    "Op_break": {
+      "_comment": "`@BREAK` directive inside a Block_for/Block_do body. The validator rejects break ops outside any enclosing loop. Codegen emits Python `break` at the appropriate indent level.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "op"
+      ],
+      "properties": {
+        "op": {
+          "const": "break"
+        },
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "rationale": {
+          "$ref": "#/$defs/RationaleString"
+        },
+        "template_version": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        }
+      }
+    },
+    "Block_do": {
+      "_comment": "Phase 9.7 (2026-05-05): `@DO <var> ... body ... @WHILE <condition> @ENDDO` run-then-check loop. Body always runs at least once. Condition is the continuation predicate (loop continues when true). The author is responsible for ensuring the predicate eventually becomes false.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "var",
+        "condition",
+        "body"
+      ],
+      "properties": {
+        "op": {
+          "const": "block_do"
+        },
+        "var": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "condition": {
+          "type": "string",
+          "minLength": 1
+        },
+        "body": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Step"
+          }
+        },
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "rationale": {
+          "$ref": "#/$defs/RationaleString"
+        },
+        "template_version": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        }
+      }
+    },
+    "Op_bind": {
+      "_comment": "`{<ref>} = <expr> [<unit>].` bind step. `expr` is a BindExpr: an expression as an Expected line writes one, `${name}` too (a `name` node); `unit` is its value's (test.py stores the value scaled to SI). The LHS slot id may be a literal integer or, inside a loop body, an arithmetic-expression slot id (e.g. `{base+i*3+4}` -> string `'base+i*3+4'`).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "ref",
+        "expr"
+      ],
+      "properties": {
+        "op": {
+          "const": "bind"
+        },
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "expr": {
+          "$ref": "#/$defs/BindExpr"
+        },
+        "unit": {
+          "$ref": "#/$defs/Unit"
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "rationale": {
+          "$ref": "#/$defs/RationaleString"
+        },
+        "template_version": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        }
+      }
+    },
+    "ScalarOperand": {
+      "_comment": "Phase 9.1 Doc 04 §9.6.1: a scalar operand on the right-hand side of a criterion. Either a plain `{N}` ref (RefOperand) or an aggregate over a list-typed measurement bound inside a Block_for body (AggregateOperand). Phase 9.2 adds the $defs only — existing criterion shapes still take a plain integer ref. Phase 9.5 will rewire criterion definitions to accept ScalarOperand.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RefOperand"
+        },
+        {
+          "$ref": "#/$defs/AggregateOperand"
+        }
+      ]
+    },
+    "RefOperand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref"
+      ],
+      "properties": {
+        "kind": {
+          "const": "ref"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        }
+      }
+    },
+    "StepBaseFields": {
+      "type": "object",
+      "required": [
+        "n",
+        "op",
+        "source"
+      ],
+      "properties": {
+        "n": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "op": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "rationale": {
+          "$ref": "#/$defs/RationaleString"
+        },
+        "template_version": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        }
+      }
+    },
+    "Step": {
+      "_comment": "Phase 9.2 (2026-04-30): a Step is either an op-shaped step (StepBaseFields + one of the Op_* $defs) OR a Block_for loop block. Block_for branch is preserved through parse — the parser produces Block_for nodes for `@FOR ... @END` instead of expanding them. Codegen (Phase 9.3) and validator (Phase 9.5) walk Block_for body recursively. Phase 9.6 (2026-04-30) adds three additional sibling branches: `Block_if` (`@IF ... @ENDIF` conditional), `Op_break_loop` (`@BREAK`), and `Op_bind` (`Bind {ref} = expr.`). These three branches share Block_for's structural pattern (preserve-by-default, no StepBaseFields requirement).",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/Block_for"
+        },
+        {
+          "$ref": "#/$defs/Block_if"
+        },
+        {
+          "$ref": "#/$defs/Block_alloc"
+        },
+        {
+          "$ref": "#/$defs/Block_table"
+        },
+        {
+          "$ref": "#/$defs/Op_abort"
+        },
+        {
+          "$ref": "#/$defs/Op_note"
+        },
+        {
+          "$ref": "#/$defs/Op_break"
+        },
+        {
+          "$ref": "#/$defs/Op_bind"
+        },
+        {
+          "$ref": "#/$defs/Block_do"
+        },
+        {
+          "$ref": "#/$defs/OpStep"
+        }
+      ]
+    },
+    "OpStep": {
+      "_comment": "An op-shaped step — the pre-Phase 9.2 Step shape, factored out so Block_for can sit as a sibling branch under Step.oneOf.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/StepBaseFields"
+        },
+        {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Op_connect"
+            },
+            {
+              "$ref": "#/$defs/Op_disconnect"
+            },
+            {
+              "$ref": "#/$defs/Op_move"
+            },
+            {
+              "$ref": "#/$defs/Op_wait"
+            },
+            {
+              "$ref": "#/$defs/Op_operator_prompt"
+            },
+            {
+              "$ref": "#/$defs/Op_operator_read_measurement"
+            },
+            {
+              "$ref": "#/$defs/Op_operator_read_diff"
+            },
+            {
+              "$ref": "#/$defs/Op_operator_judgment"
+            },
+            {
+              "$ref": "#/$defs/Op_timestamp"
+            },
+            {
+              "$ref": "#/$defs/Op_call"
+            }
+          ]
+        },
+        {
+          "if": {
+            "properties": {
+              "source": {
+                "const": "inserted"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "rationale"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "rationale"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "Op_connect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "n",
+        "op",
+        "source",
+        "text"
+      ],
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "op": {
+          "const": "connect"
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "rationale": {
+          "$ref": "#/$defs/RationaleString"
+        },
+        "template_version": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "media": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MediaRef"
+          }
+        }
+      }
+    },
+    "Op_disconnect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "n",
+        "op",
+        "source",
+        "text"
+      ],
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "op": {
+          "const": "disconnect"
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "rationale": {
+          "$ref": "#/$defs/RationaleString"
+        },
+        "template_version": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "media": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MediaRef"
+          }
+        }
+      }
+    },
+    "Op_move": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "n",
+        "op",
+        "source",
+        "text"
+      ],
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "op": {
+          "const": "move"
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "rationale": {
+          "$ref": "#/$defs/RationaleString"
+        },
+        "template_version": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "media": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MediaRef"
+          }
+        }
+      }
+    },
+    "Op_timestamp": {
+      "_comment": "`Timestamp as {<ref>}.` step. Captures float seconds since procedure start, binds to a measurement ref. No equipment side effects. `ref` accepts an integer slot id or, inside a loop body, an arithmetic-expression slot id (e.g. `{base+i}` -> string).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "n",
+        "op",
+        "source",
+        "ref"
+      ],
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "op": {
+          "const": "timestamp"
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "rationale": {
+          "$ref": "#/$defs/RationaleString"
+        },
+        "template_version": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        }
+      }
+    },
+    "Op_wait": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "n",
+        "op",
+        "source",
+        "duration",
+        "duration_unit"
+      ],
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "op": {
+          "const": "wait"
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "rationale": {
+          "$ref": "#/$defs/RationaleString"
+        },
+        "template_version": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        },
+        "duration": {
+          "$ref": "#/$defs/NumberOrLoopVarRef"
+        },
+        "duration_unit": {
+          "$ref": "#/$defs/TimeUnit"
+        },
+        "media": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MediaRef"
+          }
+        }
+      }
+    },
+    "Op_note": {
+      "_comment": "Note step per Procedure_JSON_Schema_v2 §note: `{op: 'note', text: '<text>'}`. No `n` field — notes are preserved in source order between numbered steps but carry no step number themselves. No `source` either; notes are operator-authored prose by definition.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "op",
+        "text"
+      ],
+      "properties": {
+        "op": {
+          "const": "note"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "media": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MediaRef"
+          }
+        }
+      }
+    },
+    "Op_operator_prompt": {
+      "_comment": "Universal manual-fallback operator step per Canonical_Text_Procedure_v2 §Operator: `Operator: <free-text>.` — runtime blocks until the operator confirms. Optional `ref`: when the prose ends with `as {N}`, that {N} binds the operator's typed value (free-text equivalent of `Operator: read ... as {N}`). The `text` field carries the body verbatim (with any trailing `as {N}` stripped when ref is set).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "n",
+        "op",
+        "source",
+        "text"
+      ],
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "op": {
+          "const": "operator.prompt"
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "rationale": {
+          "$ref": "#/$defs/RationaleString"
+        },
+        "template_version": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "media": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MediaRef"
+          }
+        },
+        "_provenance": {
+          "$ref": "#/$defs/Provenance"
+        }
+      }
+    },
+    "Op_operator_read_measurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "n",
+        "op",
+        "source",
+        "ref",
+        "location",
+        "quantity"
+      ],
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "op": {
+          "const": "operator.read"
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "rationale": {
+          "$ref": "#/$defs/RationaleString"
+        },
+        "template_version": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        },
+        "device": {
+          "type": "string",
+          "pattern": "^(?=.*[0-9_])[A-Z][A-Z0-9_]{0,31}$"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "quantity": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "media": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MediaRef"
+          }
+        },
+        "_provenance": {
+          "$ref": "#/$defs/Provenance"
+        }
+      }
+    },
+    "Op_operator_read_diff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "n",
+        "op",
+        "source",
+        "device",
+        "ref",
+        "location_a",
+        "location_b",
+        "quantity"
+      ],
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "op": {
+          "const": "operator.read_diff"
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "rationale": {
+          "$ref": "#/$defs/RationaleString"
+        },
+        "template_version": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        },
+        "device": {
+          "type": "string",
+          "pattern": "^(?=.*[0-9_])[A-Z][A-Z0-9_]{0,31}$"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "location_a": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "location_b": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "quantity": {
+          "type": "string",
+          "enum": [
+            "DC voltage",
+            "AC voltage",
+            "DC current",
+            "AC current",
+            "resistance"
+          ]
+        },
+        "media": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MediaRef"
+          }
+        },
+        "_provenance": {
+          "$ref": "#/$defs/Provenance"
+        }
+      }
+    },
+    "Op_operator_judgment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "n",
+        "op",
+        "source",
+        "ref",
+        "target",
+        "description"
+      ],
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "op": {
+          "const": "operator.judge"
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "rationale": {
+          "$ref": "#/$defs/RationaleString"
+        },
+        "template_version": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "media": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MediaRef"
+          }
+        },
+        "_provenance": {
+          "$ref": "#/$defs/Provenance"
+        }
+      }
+    },
+    "Criterion": {
+      "_comment": "Criterion grammar per Canonical_Text_Procedure_v2 §Expected. Discriminator field is `kind`. The parser emits structured criterion objects with kind-specific value/unit pairs (e.g., `limit_value`+`limit_unit` for lt/gt/lte/gte; `nominal_value`+`unit`+`tol_value`+`tol_unit` for tolerance_abs; `nominal_value`+`unit`+`tol_pct` for tolerance_pct). `ref` is an integer ref id at top-level expected, or a free-string arithmetic expression when inside a `block_for.body` (e.g. `'en_base + per_pin*i + 0'`).",
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "oneOf": [
+        {
+          "$ref": "#/$defs/Crit_lt"
+        },
+        {
+          "$ref": "#/$defs/Crit_template"
+        },
+        {
+          "$ref": "#/$defs/Crit_lte"
+        },
+        {
+          "$ref": "#/$defs/Crit_gt"
+        },
+        {
+          "$ref": "#/$defs/Crit_gte"
+        },
+        {
+          "$ref": "#/$defs/Crit_eq"
+        },
+        {
+          "$ref": "#/$defs/Crit_range"
+        },
+        {
+          "$ref": "#/$defs/Crit_tolerance"
+        },
+        {
+          "$ref": "#/$defs/Crit_percent_tolerance"
+        },
+        {
+          "$ref": "#/$defs/Crit_eq_text"
+        },
+        {
+          "$ref": "#/$defs/Crit_regex_match"
+        },
+        {
+          "$ref": "#/$defs/Crit_contains"
+        },
+        {
+          "$ref": "#/$defs/Crit_one_of"
+        },
+        {
+          "$ref": "#/$defs/Crit_one_of_text"
+        },
+        {
+          "$ref": "#/$defs/Crit_operator_decision"
+        },
+        {
+          "$ref": "#/$defs/Crit_diff"
+        },
+        {
+          "$ref": "#/$defs/Crit_range_abs_each"
+        },
+        {
+          "$ref": "#/$defs/Crit_lt_each"
+        },
+        {
+          "$ref": "#/$defs/Crit_lte_each"
+        },
+        {
+          "$ref": "#/$defs/Crit_gt_each"
+        },
+        {
+          "$ref": "#/$defs/Crit_gte_each"
+        },
+        {
+          "$ref": "#/$defs/Crit_monotonic"
+        },
+        {
+          "$ref": "#/$defs/Crit_aggregate"
+        },
+        {
+          "$ref": "#/$defs/Crit_eq_digital"
+        },
+        {
+          "$ref": "#/$defs/Crit_expr"
+        },
+        {
+          "$ref": "#/$defs/Crit_expr_in"
+        },
+        {
+          "$ref": "#/$defs/Crit_contains_any"
+        },
+        {
+          "$ref": "#/$defs/Crit_contains_all"
+        },
+        {
+          "$ref": "#/$defs/Crit_logic"
+        }
+      ]
+    },
+    "Crit_lt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "limit_value"
+      ],
+      "properties": {
+        "kind": {
+          "const": "lt"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "limit_value": {
+          "type": "number"
+        },
+        "limit_literal": {
+          "$ref": "#/$defs/HexLiteral"
+        },
+        "limit_unit": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "Crit_lte": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "limit_value"
+      ],
+      "properties": {
+        "kind": {
+          "const": "lte"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "limit_value": {
+          "type": "number"
+        },
+        "limit_literal": {
+          "$ref": "#/$defs/HexLiteral"
+        },
+        "limit_unit": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "Crit_gt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "limit_value"
+      ],
+      "properties": {
+        "kind": {
+          "const": "gt"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "limit_value": {
+          "type": "number"
+        },
+        "limit_literal": {
+          "$ref": "#/$defs/HexLiteral"
+        },
+        "limit_unit": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "Crit_gte": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "limit_value"
+      ],
+      "properties": {
+        "kind": {
+          "const": "gte"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "limit_value": {
+          "type": "number"
+        },
+        "limit_literal": {
+          "$ref": "#/$defs/HexLiteral"
+        },
+        "limit_unit": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "Crit_eq": {
+      "_comment": "Equality criterion: `<target_value> [<unit>]` (e.g., `== 0`, `== 5.0 V`); `TRUE` / `FALSE` is `true` / `false`. `target_unit` is null for unitless integer comparisons (digital reads etc.) and a unit string when comparing physical quantities.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "target_value"
+      ],
+      "properties": {
+        "kind": {
+          "const": "eq"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "target_value": {
+          "type": [
+            "number",
+            "boolean"
+          ]
+        },
+        "target_literal": {
+          "$ref": "#/$defs/HexLiteral"
+        },
+        "target_unit": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "Crit_range": {
+      "_comment": "Range criterion `{N} in [lo_value, hi_value] [<unit>]`. A bound left out, `]lo, hi[`, is `lo_open` / `hi_open`; `not in` is `negated`; each present only when true. lo_value <= hi_value is enforced by the validator's semantic pass (EXP_RANGE_INVERTED), not by JSON Schema.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "lo_value",
+        "hi_value",
+        "unit"
+      ],
+      "properties": {
+        "kind": {
+          "const": "range"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "lo_value": {
+          "type": "number"
+        },
+        "lo_literal": {
+          "$ref": "#/$defs/HexLiteral"
+        },
+        "hi_value": {
+          "type": "number"
+        },
+        "hi_literal": {
+          "$ref": "#/$defs/HexLiteral"
+        },
+        "lo_open": {
+          "const": true
+        },
+        "hi_open": {
+          "const": true
+        },
+        "negated": {
+          "const": true
+        },
+        "unit": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "Crit_tolerance": {
+      "_comment": "Absolute-tolerance criterion: `<nominal> [<unit>] +/- <tol> [<tol_unit>]` (e.g., `28.0 V +/- 1.0 V`, `0x10 +/- 2`); the nominal and the tolerance both carry a unit or neither does (both `null`). Parser emits as `tolerance_abs`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "nominal_value",
+        "unit",
+        "tol_value",
+        "tol_unit"
+      ],
+      "properties": {
+        "kind": {
+          "const": "tolerance_abs"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "nominal_value": {
+          "type": "number"
+        },
+        "unit": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tol_value": {
+          "type": "number",
+          "minimum": 0
+        },
+        "tol_unit": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "nominal_literal": {
+          "$ref": "#/$defs/HexLiteral"
+        },
+        "tol_literal": {
+          "$ref": "#/$defs/HexLiteral"
+        }
+      },
+      "anyOf": [
+        {
+          "properties": {
+            "unit": {
+              "type": "string"
+            },
+            "tol_unit": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "properties": {
+            "unit": {
+              "type": "null"
+            },
+            "tol_unit": {
+              "type": "null"
+            }
+          }
+        }
+      ]
+    },
+    "Crit_percent_tolerance": {
+      "_comment": "Percent-tolerance criterion: `<nominal> [<unit>] +/- <pct> %` (e.g., `5.0 V +/- 5 %`, `100 +/- 5 %`); `unit` is `null` when the nominal has none. Parser emits as `tolerance_pct`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "nominal_value",
+        "unit",
+        "tol_pct"
+      ],
+      "properties": {
+        "kind": {
+          "const": "tolerance_pct"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "nominal_value": {
+          "type": "number"
+        },
+        "unit": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tol_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "nominal_literal": {
+          "$ref": "#/$defs/HexLiteral"
+        },
+        "tol_pct_literal": {
+          "$ref": "#/$defs/HexLiteral"
+        }
+      }
+    },
+    "Crit_template": {
+      "_comment": "An `## Expected` line holding a `${...}`, kept as written: in each turn each `${...}` is its value and the line it gives is read as any other (codegen, the guided run).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "text"
+      ],
+      "properties": {
+        "kind": {
+          "const": "template"
+        },
+        "text": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/LineText"
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{"
+            }
+          ]
+        }
+      }
+    },
+    "HexLiteral": {
+      "_comment": "The spelling of a criterion number written in hex (`0x1A00`), kept beside its integer value so the canonical text comes back as written; present only when the text had `0x`.",
+      "type": "string",
+      "pattern": "^0x[0-9A-Fa-f]+$"
+    },
+    "LineText": {
+      "_comment": "A text of one line: no line break of any kind (\\n, \\r, \\u2028, ...), which would split the canonical Expected line.",
+      "type": "string",
+      "pattern": "^[^\n\r\u000b\f\u001c\u001d\u001e  ]*$"
+    },
+    "CriterionRef": {
+      "_comment": "Allowed shapes for a `ref` field (used by Criterion entries and by Op_* steps that bind/read a `{N}` ref). Three forms: (a) integer ref id (e.g. `{1}` -> 1, `{0}` -> 0); (b) string arithmetic expression (e.g. `'en_base + per_pin*i + 0'`) when the ref sits inside a `block_for.body`; (c) range object `{kind: 'range', lo, hi}` when the canonical text uses paired-range syntax `{lo..hi}` to bind a list of refs in one step.",
+      "oneOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "lo",
+            "hi"
+          ],
+          "properties": {
+            "kind": {
+              "const": "range"
+            },
+            "lo": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "hi": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      ]
+    },
+    "Crit_eq_text": {
+      "_comment": "Programmatic exact string match. Used when a step reads a discrete textual value (e.g. digital input '0'/'1') and the runtime predicate is `m == target_text`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "target_text"
+      ],
+      "properties": {
+        "kind": {
+          "const": "eq_text"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "target_text": {
+          "type": "string"
+        }
+      }
+    },
+    "Crit_contains": {
+      "_comment": "Substring test on a text reading (a bus scan, an SPI transfer, a UART answer). Runtime predicate is `target_text in m`, no strip, no case folding.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "target_text"
+      ],
+      "properties": {
+        "kind": {
+          "const": "contains"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "target_text": {
+          "type": "string"
+        }
+      }
+    },
+    "Crit_contains_any": {
+      "_comment": "`{N} contains one of [\"a\", \"b\", ...]`: two or more texts, PASS when any is a substring of the text reading (as `contains`).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "texts"
+      ],
+      "properties": {
+        "kind": {
+          "const": "contains_any"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "texts": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/LineText"
+          }
+        }
+      }
+    },
+    "Crit_contains_all": {
+      "_comment": "`{N} contains all of [\"a\", \"b\", ...]`: two or more texts, PASS when every one is a substring of the text reading (as `contains`).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "texts"
+      ],
+      "properties": {
+        "kind": {
+          "const": "contains_all"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "texts": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/LineText"
+          }
+        }
+      }
+    },
+    "Crit_one_of": {
+      "_comment": "Equality with any of two or more numbers: `{N} one of [0x01, 0x02, 0x04] [<unit>]`. Each value keeps its type and, when written in hex, its spelling (`literal`); one `unit` (or `null`) for all. Same equality as `eq`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "values",
+        "unit"
+      ],
+      "properties": {
+        "kind": {
+          "const": "one_of"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "values": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "number"
+              },
+              "literal": {
+                "$ref": "#/$defs/HexLiteral"
+              }
+            }
+          }
+        },
+        "unit": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "Crit_one_of_text": {
+      "_comment": "Equality with any of two or more texts: `{N} one of [\"OK\", \"DONE\"]`. Same equality as `eq_text`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "texts"
+      ],
+      "properties": {
+        "kind": {
+          "const": "one_of"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "texts": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/LineText"
+          }
+        }
+      }
+    },
+    "Crit_regex_match": {
+      "_comment": "Regex-match criterion. Runtime predicate is `re.search(pattern, measured.strip())`. Used when a deterministic string read needs pattern matching rather than exact equality. `pattern` is preserved verbatim from the canonical text body between the `/` delimiters; `\\/` escapes a literal `/`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "pattern"
+      ],
+      "properties": {
+        "kind": {
+          "const": "regex_match"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "pattern": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "Crit_operator_decision": {
+      "_comment": "Operator-judged criterion. Runtime SKIPS the predicate — the operator's verdict (PASS/FAIL/SKIP from `operator.judge`) is authoritative; the operator's free-form remark is stored as the measurement. `verdict_text` is the informational hint shown to the operator (the `(target = \"...\")` clause from the canonical text).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "verdict_text"
+      ],
+      "properties": {
+        "kind": {
+          "const": "operator_decision"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "verdict_text": {
+          "type": "string"
+        }
+      }
+    },
+    "_Crit_within_pct_RENAMED_v2.0.x": {
+      "_comment": "Tombstone: the legacy `kind: within_pct` was renamed to `kind: percent_tolerance` per `04_Expected_Expression_Grammar_v2.md` §3.8 (closed-at-ten v2.0.0 spec). Submitted JSONs using `within_pct` will fail schema validation. Codegen rewrites `kind: percent_tolerance` to legacy RULES `kind: range_abs` per Doc 04 §11, so generated test.py files keep the same eval_verdicts predicate."
+    },
+    "_Crit_range_abs_RENAMED_v2.0.x": {
+      "_comment": "Tombstone: the legacy `kind: range_abs` was renamed to `kind: range` per `04_Expected_Expression_Grammar_v2.md` §3.6. Codegen continues to emit legacy RULES `kind: range_abs` per Doc 04 §11."
+    },
+    "_Crit_simple_cmp_RENAMED_v2.0.x": {
+      "_comment": "Tombstone: the legacy `kind: lt_abs/le_abs/gt_abs/ge_abs/eq_abs` enum was split into the dedicated `kind: lt/lte/gt/gte/eq` branches per `04_Expected_Expression_Grammar_v2.md` §3.1-§3.5. Codegen continues to emit the legacy `_abs`-suffixed kinds in the generated RULES dict per Doc 04 §11."
+    },
+    "_Crit_verdict_set_NEVER_SHIPPED_v2.0.x": {
+      "_comment": "Tombstone: the `kind: verdict_set` form (operator picks one closed-set token, runtime predicate `m in verdicts`) was specified in early Doc 04 §3.9 drafts but never matched the actual operator workflow (operator enters a free-form remark + chooses Pass/Fail/Skip independently). Use `kind: operator_decision` instead — the criterion has no programmatic predicate; the operator's verdict is authoritative."
+    },
+    "_Crit_is_NEVER_SHIPPED_v2.0.x": {
+      "_comment": "Tombstone: the `kind: is` form (singleton specialization of verdict_set) was specified in early Doc 04 §3.10 drafts but never matched the operator workflow for the same reason as verdict_set. Use `kind: operator_decision` for operator-judged criteria, or `kind: eq_text` for programmatic exact-string matches."
+    },
+    "Crit_diff": {
+      "_comment": "Cross-measurement criterion: `{N}: {lhs_ref} - {rhs_ref} <op> <limit_value> <limit_unit>.` Single kind discriminated by the `op` field. Operand refs are NAMED (`lhs_ref` / `rhs_ref`). All ref-shaped fields accept integer ref ids OR string arithmetic expressions (the latter when the criterion sits inside a `block_for.body`).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "op",
+        "lhs_ref",
+        "rhs_ref",
+        "limit_value"
+      ],
+      "properties": {
+        "kind": {
+          "const": "diff"
+        },
+        "op": {
+          "enum": [
+            "<",
+            "<=",
+            ">",
+            ">=",
+            "="
+          ],
+          "_comment": "Comparator as written: <, <=, >, >=, =."
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "lhs_ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "rhs_ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "limit_value": {
+          "type": "number"
+        },
+        "limit_literal": {
+          "$ref": "#/$defs/HexLiteral"
+        },
+        "limit_unit": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "Crit_range_abs_each": {
+      "_comment": "`{N}: in [<lo_value>, <hi_value>] <unit> each.` — every element of the list-bound ref must lie in the closed interval. SKIP iff list is empty.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "lo_value",
+        "hi_value",
+        "unit"
+      ],
+      "properties": {
+        "kind": {
+          "const": "range_abs_each"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "lo_value": {
+          "type": "number"
+        },
+        "hi_value": {
+          "type": "number"
+        },
+        "unit": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "Crit_lt_each": {
+      "_comment": "`{N}: < <value> <unit> each.` — every element strictly less than the limit.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "limit_value",
+        "limit_unit"
+      ],
+      "properties": {
+        "kind": {
+          "const": "lt_each"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "limit_value": {
+          "type": "number"
+        },
+        "limit_unit": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "Crit_lte_each": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "limit_value",
+        "limit_unit"
+      ],
+      "properties": {
+        "kind": {
+          "const": "lte_each"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "limit_value": {
+          "type": "number"
+        },
+        "limit_unit": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "Crit_gt_each": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "limit_value",
+        "limit_unit"
+      ],
+      "properties": {
+        "kind": {
+          "const": "gt_each"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "limit_value": {
+          "type": "number"
+        },
+        "limit_unit": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "Crit_gte_each": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "limit_value",
+        "limit_unit"
+      ],
+      "properties": {
+        "kind": {
+          "const": "gte_each"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "limit_value": {
+          "type": "number"
+        },
+        "limit_unit": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "Crit_monotonic": {
+      "_comment": "`{N}: monotonic <mode>.` — list-bound ref must satisfy a 4-mode monotonicity predicate. Vacuously PASS for length-1 lists; SKIP for length-0.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "mode"
+      ],
+      "properties": {
+        "kind": {
+          "const": "monotonic"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "mode": {
+          "enum": [
+            "increasing",
+            "decreasing",
+            "strictly_increasing",
+            "strictly_decreasing"
+          ]
+        }
+      }
+    },
+    "MediaRef": {
+      "_comment": "Per the v2 media-restoration amendment (2026-04-28): each step optionally carries a media[] array of PCB component/pin references, derived from the step text by the deterministic text parser. The procedure GUI uses these to render board images via the ODB CLI. Round-trip: text->JSON populates media; JSON->text drops it (canonical text doesn’t carry media); JSON->code does not consume it; preserving JSON->emit->parse identity requires the parser to re-derive media from text on the back-trip.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "ref",
+        "caption"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "image"
+          ]
+        },
+        "caption": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "ref": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "component"
+          ],
+          "properties": {
+            "component": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "pin": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "is_tp": {
+              "_comment": "Set by the media catalogue for a test point written `TP NAME`: the component is stored without the prefix and the caption rebuilt as `TP NAME`.",
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "Block_for_iter_range_float": {
+      "_comment": "Float range form: `@FOR v IN A..B STEP S` where any of A/B/S is a float. Required to express continuous sweeps.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "start",
+        "stop",
+        "step"
+      ],
+      "properties": {
+        "kind": {
+          "const": "range_float"
+        },
+        "start": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/Range_bound_name"
+            }
+          ]
+        },
+        "stop": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/Range_bound_name"
+            }
+          ]
+        },
+        "step": {
+          "anyOf": [
+            {
+              "type": "number",
+              "not": {
+                "const": 0
+              }
+            },
+            {
+              "$ref": "#/$defs/Range_bound_name"
+            }
+          ]
+        }
+      }
+    },
+    "Block_for_iter_name": {
+      "_comment": "Bare-name iterable: `@FOR i IN n` where `n` is either a `@LET`-bound integer (iterate 1..n) or a `@TABLE` reference (iterate rows). Disambiguation is deferred to codegen because both forms are syntactically identical.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "name"
+      ],
+      "properties": {
+        "kind": {
+          "const": "name"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$"
+        }
+      }
+    },
+    "Crit_aggregate": {
+      "_comment": "Aggregate criterion: mean|min|max|sum|count|rms over a range of refs — numbers (`range_lo`, `range_hi`) or a name's as written (`ref`: `Vrail[3..7]`, `Vrail[*]`), exactly one — optionally minus a single ref, compared via op (<, <=, >, >=, =) against a numeric limit, or `in` bounds (`lo_value`, `hi_value`, the flags as Crit_range's, the unit in `limit_unit`). Parser emits this for the text forms `mean({A..B}) <op> <num> [unit].`, `mean({A..B}) - {N} <op> <num> [unit].` and `mean({A..B}) [not] in [lo, hi] [unit].`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "func",
+        "op"
+      ],
+      "properties": {
+        "kind": {
+          "const": "aggregate"
+        },
+        "func": {
+          "enum": [
+            "mean",
+            "min",
+            "max",
+            "sum",
+            "count",
+            "rms"
+          ]
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "range_lo": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "range_hi": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "minus_ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "op": {
+          "enum": [
+            "<",
+            "<=",
+            ">",
+            ">=",
+            "=",
+            "in"
+          ]
+        },
+        "limit_value": {
+          "type": "number"
+        },
+        "limit_literal": {
+          "$ref": "#/$defs/HexLiteral"
+        },
+        "lo_value": {
+          "type": "number"
+        },
+        "lo_literal": {
+          "$ref": "#/$defs/HexLiteral"
+        },
+        "hi_value": {
+          "type": "number"
+        },
+        "hi_literal": {
+          "$ref": "#/$defs/HexLiteral"
+        },
+        "lo_open": {
+          "const": true
+        },
+        "hi_open": {
+          "const": true
+        },
+        "negated": {
+          "const": true
+        },
+        "limit_unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "range_lo",
+            "range_hi"
+          ]
+        },
+        {
+          "required": [
+            "ref"
+          ]
+        }
+      ],
+      "if": {
+        "properties": {
+          "op": {
+            "const": "in"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "lo_value",
+          "hi_value"
+        ],
+        "not": {
+          "required": [
+            "limit_value"
+          ]
+        }
+      },
+      "else": {
+        "required": [
+          "limit_value"
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "lo_value"
+              ]
+            },
+            {
+              "required": [
+                "hi_value"
+              ]
+            },
+            {
+              "required": [
+                "lo_open"
+              ]
+            },
+            {
+              "required": [
+                "hi_open"
+              ]
+            },
+            {
+              "required": [
+                "negated"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "Crit_eq_digital": {
+      "_comment": "Digital-logic equality: `{N}: == '0'.` or `{N}: == '1'.`. Disambiguates from PWM-duty equality (`{N}: == 1.` parses as eq with target_value=1). Use this form when the ref holds a digital read (a pack op binding a `digital` reading). The single quotes mirror the Set-side digital-write dispatch syntax.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref",
+        "target_value"
+      ],
+      "properties": {
+        "kind": {
+          "const": "eq_digital"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "target_value": {
+          "enum": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    "Crit_expr": {
+      "_comment": "`<expr> <cmp> <expr>` — general expression comparison. Used when neither side reduces to a single ref or a recognized prefix form (e.g. `{1} <= {2} + 0.8 V`, `{1} <= {2} + {3}`, `{1} = {2}`). A unit follows a number (`lit.unit`); the criterion has none of its own.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "lhs",
+        "op",
+        "rhs"
+      ],
+      "properties": {
+        "kind": {
+          "const": "expr"
+        },
+        "lhs": {
+          "$ref": "#/$defs/Operand"
+        },
+        "op": {
+          "enum": [
+            "<",
+            "<=",
+            ">",
+            ">=",
+            "="
+          ]
+        },
+        "rhs": {
+          "$ref": "#/$defs/Operand"
+        }
+      }
+    },
+    "Crit_expr_in": {
+      "_comment": "`<expr> in [lo, hi] [<unit>]` — a range on a computed value (`{3} / 256 in [20, 30]`): the bounds, unit and flags of Crit_range, `lhs` names at least one ref and its numbers carry no unit. A lone ref is Crit_range.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "lhs",
+        "op",
+        "lo_value",
+        "hi_value",
+        "unit"
+      ],
+      "properties": {
+        "kind": {
+          "const": "expr"
+        },
+        "lhs": {
+          "$ref": "#/$defs/Operand"
+        },
+        "op": {
+          "const": "in"
+        },
+        "lo_value": {
+          "type": "number"
+        },
+        "lo_literal": {
+          "$ref": "#/$defs/HexLiteral"
+        },
+        "hi_value": {
+          "type": "number"
+        },
+        "hi_literal": {
+          "$ref": "#/$defs/HexLiteral"
+        },
+        "lo_open": {
+          "const": true
+        },
+        "hi_open": {
+          "const": true
+        },
+        "negated": {
+          "const": true
+        },
+        "unit": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "Crit_logic": {
+      "_comment": "`or` / `and` over two or more full criteria (`{1} < 1 or {1} > 2`, `({1} < 1 or {1} > 2) and {2} = \"OK\"`). A part with the same `op` is flattened in; one with the other `op` is a parenthesised group. Verdict (Kleene): `or` PASS when a part passes, FAIL when every part fails; `and` FAIL when a part fails, PASS when every part passes; SKIP otherwise. A part of the same `op` as its parent is refused: it is written flattened.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "op",
+        "parts"
+      ],
+      "properties": {
+        "kind": {
+          "const": "logic"
+        },
+        "op": {
+          "enum": [
+            "or",
+            "and"
+          ]
+        },
+        "parts": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/Criterion"
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "op": {
+            "const": "or"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "parts": {
+            "items": {
+              "not": {
+                "required": [
+                  "kind",
+                  "op"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "logic"
+                  },
+                  "op": {
+                    "const": "or"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "parts": {
+            "items": {
+              "not": {
+                "required": [
+                  "kind",
+                  "op"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "logic"
+                  },
+                  "op": {
+                    "const": "and"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "ExprNode": {
+      "_comment": "Recursive expression AST for Crit_expr. Leaves are ref / lit / str / char, internal nodes are binop with `+ - * /` or a bit operation `& | << >>` (IntOperand; a shift by a literal is 0 to 512), and abs (`abs(<expr>)`). An operand of arithmetic, of abs and a side of Crit_expr is an Operand. Rules the schema cannot express, the parser keeps: a side of numbers alone in a bit operation exactly whole (EXP_BITS_ON_DECIMAL), a unit on a criterion holding a bit operation anywhere or on a factor of `*` / `/`, a number added to a reading without the unit its line carries elsewhere, bounds holding no number (EXP_RANGE_INVERTED), and readings a step binds as decimals in a bit operation (EXP_BITS_ON_DECIMAL).",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RefNode"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "const": "lit"
+            },
+            "value": {
+              "type": [
+                "number",
+                "boolean"
+              ]
+            },
+            "literal": {
+              "$ref": "#/$defs/HexLiteral"
+            },
+            "unit": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/StrNode"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "const": "char"
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "op",
+            "lhs",
+            "rhs"
+          ],
+          "properties": {
+            "kind": {
+              "const": "binop"
+            },
+            "op": {
+              "enum": [
+                "+",
+                "-",
+                "*",
+                "/",
+                "&",
+                "|",
+                "<<",
+                ">>"
+              ]
+            },
+            "lhs": {
+              "$ref": "#/$defs/Operand"
+            },
+            "rhs": {
+              "$ref": "#/$defs/Operand"
+            }
+          },
+          "if": {
+            "properties": {
+              "op": {
+                "enum": [
+                  "&",
+                  "|",
+                  "<<",
+                  ">>"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "lhs": {
+                "$ref": "#/$defs/IntOperand"
+              },
+              "rhs": {
+                "$ref": "#/$defs/IntOperand"
+              }
+            },
+            "if": {
+              "properties": {
+                "op": {
+                  "enum": [
+                    "<<",
+                    ">>"
+                  ]
+                },
+                "rhs": {
+                  "required": [
+                    "kind"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "lit"
+                    }
+                  }
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "rhs": {
+                  "properties": {
+                    "value": {
+                      "minimum": 0,
+                      "maximum": 512
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "arg"
+          ],
+          "properties": {
+            "kind": {
+              "enum": ["abs", "neg"]
+            },
+            "arg": {
+              "$ref": "#/$defs/Operand"
+            }
+          }
+        }
+      ]
+    },
+    "Operand": {
+      "_comment": "An operand of arithmetic, of abs() and a side of Crit_expr: a number, a single ref or arithmetic — never text (str / char) nor a ref range, which no evaluator can compute.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/ExprNode"
+        },
+        {
+          "not": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "str",
+                  "char"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "kind",
+              "ref"
+            ],
+            "properties": {
+              "kind": {
+                "const": "ref"
+              },
+              "ref": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "IntOperand": {
+      "_comment": "A side of a bit operation (`& | << >>`): no number with a unit anywhere below, no literal that is no integer. One of numbers alone exactly whole (else EXP_BITS_ON_DECIMAL), the parser keeps; any other a run computes (not computed when it is no whole number).",
+      "allOf": [
+        {
+          "$ref": "#/$defs/Operand"
+        },
+        {
+          "not": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "lit"
+              },
+              "value": {
+                "not": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/NoUnitOperand"
+        }
+      ]
+    },
+    "NoUnitOperand": {
+      "_comment": "An operand inside a bit operation: no number with a unit, at any depth.",
+      "not": {
+        "required": [
+          "kind",
+          "unit"
+        ],
+        "properties": {
+          "kind": {
+            "const": "lit"
+          }
+        }
+      },
+      "properties": {
+        "lhs": {
+          "$ref": "#/$defs/NoUnitOperand"
+        },
+        "rhs": {
+          "$ref": "#/$defs/NoUnitOperand"
+        },
+        "arg": {
+          "$ref": "#/$defs/NoUnitOperand"
+        }
+      }
+    },
+    "BindExpr": {
+      "_comment": "A Bind's right-hand side: an expression as an Expected line writes one — refs, numbers with no unit (the Bind's `unit` is its value's), `+ - * /`, bit operations, abs — plus the macro values `${name}` / `${row.key}` (name) and `COUNT(<table>)` (count), and an aggregate of a ref range (`mean({1..3})`). The parser keeps what the schema cannot: a whole side of numbers alone in a bit operation, no constant divisor 0, no text.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RefNode"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "const": "lit"
+            },
+            "value": {
+              "type": "number"
+            },
+            "literal": {
+              "$ref": "#/$defs/HexLiteral"
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/NameNode"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "table"
+          ],
+          "properties": {
+            "kind": {
+              "const": "count"
+            },
+            "table": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "func",
+            "ref"
+          ],
+          "properties": {
+            "kind": {
+              "const": "aggregate"
+            },
+            "func": {
+              "enum": [
+                "mean",
+                "min",
+                "max",
+                "sum",
+                "count",
+                "rms"
+              ]
+            },
+            "ref": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/RangeNode"
+                },
+                {
+                  "type": "string",
+                  "minLength": 1
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "op",
+            "lhs",
+            "rhs"
+          ],
+          "properties": {
+            "kind": {
+              "const": "binop"
+            },
+            "op": {
+              "enum": [
+                "+",
+                "-",
+                "*",
+                "/",
+                "&",
+                "|",
+                "<<",
+                ">>"
+              ]
+            },
+            "lhs": {
+              "$ref": "#/$defs/BindExpr"
+            },
+            "rhs": {
+              "$ref": "#/$defs/BindExpr"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "arg"
+          ],
+          "properties": {
+            "kind": {
+              "enum": ["abs", "neg"]
+            },
+            "arg": {
+              "$ref": "#/$defs/BindExpr"
+            }
+          }
+        }
+      ]
+    },
+    "RefNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref"
+      ],
+      "properties": {
+        "kind": {
+          "const": "ref"
+        },
+        "ref": {
+          "$ref": "#/$defs/CriterionRef"
+        }
+      }
+    },
+    "NameNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "name"
+      ],
+      "properties": {
+        "kind": {
+          "const": "name"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[^{}\\n\\r]+$"
+        }
+      }
+    },
+    "StrNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "value"
+      ],
+      "properties": {
+        "kind": {
+          "const": "str"
+        },
+        "value": {
+          "type": "string"
+        }
+      }
+    },
+    "RangeNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "lo",
+        "hi"
+      ],
+      "properties": {
+        "kind": {
+          "const": "range"
+        },
+        "lo": {
+          "$ref": "#/$defs/CriterionRef"
+        },
+        "hi": {
+          "$ref": "#/$defs/CriterionRef"
+        }
+      }
+    },
+    "Unit": {
+      "type": "string",
+      "enum": [
+        "A",
+        "GHz",
+        "Hz",
+        "MHz",
+        "MOhm",
+        "MΩ",
+        "Ohm",
+        "V",
+        "W",
+        "deg",
+        "degC",
+        "kA",
+        "kHz",
+        "kOhm",
+        "kV",
+        "kW",
+        "kΩ",
+        "mA",
+        "mV",
+        "mW",
+        "ms",
+        "mΩ",
+        "ns",
+        "ohm",
+        "s",
+        "uA",
+        "uV",
+        "uW",
+        "us",
+        "µA",
+        "µV",
+        "µW",
+        "µs",
+        "Ω",
+        "%"
+      ],
+      "_comment": "A unit of the one unit table (rules_packager_base.test_helpers.UNITS), or `%` — never empty."
+    },
+    "Op_call": {
+      "_comment": "`Call <module>.<function>(<arg>, ...)[ (timeout = <t> <unit>)][ as <out>, ...].` step: runs a project function (functions/<module>.py) on values and binds what it returns. `args` is always present; `timeout` / `timeout_unit` and `outputs` only when written. An output's `ref` is an integer slot id or the text written (a name, arithmetic, a range `11..20`, `H[1..10]`); its `unit` is the unit the function returns (stored in SI). The parser keeps what the schema cannot: no name part starting with `_` or a Python keyword, keywords after positionals and once each, a time limit above 0.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "n",
+        "op",
+        "source",
+        "function",
+        "args"
+      ],
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "op": {
+          "const": "call"
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "rationale": {
+          "$ref": "#/$defs/RationaleString"
+        },
+        "template_version": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        },
+        "function": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CallArg"
+          }
+        },
+        "timeout": {
+          "$ref": "#/$defs/NumberOrLoopVarRef"
+        },
+        "timeout_unit": {
+          "$ref": "#/$defs/TimeUnit"
+        },
+        "outputs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "ref"
+            ],
+            "properties": {
+              "ref": {
+                "$ref": "#/$defs/CriterionRef"
+              },
+              "unit": {
+                "$ref": "#/$defs/Unit"
+              }
+            }
+          }
+        }
+      },
+      "dependentRequired": {
+        "timeout": [
+          "timeout_unit"
+        ],
+        "timeout_unit": [
+          "timeout"
+        ]
+      }
+    },
+    "CallArg": {
+      "_comment": "A Call argument: its value, the unit it was written with (passed in SI), its keyword `name` when written `name=value`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "value"
+      ],
+      "properties": {
+        "value": {
+          "$ref": "#/$defs/CallValue"
+        },
+        "unit": {
+          "$ref": "#/$defs/Unit"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
+        }
+      }
+    },
+    "CallValue": {
+      "_comment": "A Call argument's value: a ref (a name range or `[*]` as written: a list), a range of refs (a list), a number (`true` / `false` for TRUE / FALSE; a hex one keeps its spelling), a minus sign on a number (a hex one), a quoted text, a `${name}`.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RefNode"
+        },
+        {
+          "$ref": "#/$defs/RangeNode"
+        },
+        {
+          "$ref": "#/$defs/CallLit"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "arg"
+          ],
+          "properties": {
+            "kind": {
+              "const": "neg"
+            },
+            "arg": {
+              "$ref": "#/$defs/CallLit"
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/StrNode"
+        },
+        {
+          "$ref": "#/$defs/NameNode"
+        }
+      ]
+    },
+    "TimeUnit": {
+      "type": "string",
+      "enum": [
+        "s",
+        "ms",
+        "us",
+        "µs",
+        "ns"
+      ]
+    },
+    "CallLit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "value"
+      ],
+      "properties": {
+        "kind": {
+          "const": "lit"
+        },
+        "value": {
+          "type": [
+            "number",
+            "boolean"
+          ]
+        },
+        "literal": {
+          "$ref": "#/$defs/HexLiteral"
+        }
+      }
+    }
+  }
+}

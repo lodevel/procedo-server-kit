@@ -52,8 +52,8 @@ contract fails the repository's tests until a kit case claims it or the gap tabl
 
 | | Rules |
 |---|---|
-| Normative rules | **373** |
-| COVERED | **358** |
+| Normative rules | **378** |
+| COVERED | **363** |
 | GAP | **0** |
 | HAND | **14** |
 | UNTESTABLE | **1** |
@@ -62,15 +62,15 @@ contract fails the repository's tests until a kit case claims it or the gap tabl
 By section (COVERED / all):
 
 - 2. Conventions: 36/36
-- 3. Address, headers, discovery, authentication, transport: 31/37
+- 3. Address, headers, discovery, authentication, transport: 32/38
 - 4. Errors: 14/19
 - 5. The objects: 77/77
-- 6.1–6.2 Rules shared by the calls, and how bytes travel: 26/27
+- 6.1–6.2 Rules shared by the calls, and how bytes travel: 28/29
 - 6.3 Projects, tests and releases: 40/40
 - 6.4 Evidence: 84/85
 - 6.5 The library, 6.6 storages and large files: 28/29
 - 6.7 The import: 14/14
-- 6.8 The server's users: 3/3
+- 6.8 The server's users: 5/5
 - 7. Storages the app reaches itself: 4/5
 - 9. The machine-readable twin: 1/1
 
@@ -136,7 +136,7 @@ By section (COVERED / all):
 | [`3.3.info-api-version-1`](procedo_server_contract.md#rule-3.3.info-api-version-1) | 3.3 | `api_versions` lists `"1"`. | COVERED | `http::test_info_answers_exactly_its_fields_to_a_valid_token`, `http::test_the_apps_discovery_takes_the_base_with_or_without_its_trailing_slash` |
 | [`3.3.info-calls`](procedo_server_contract.md#rule-3.3.info-calls) | 3.3, 6.1 | `calls` lists the optional calls offered, each once, no core call; each one listed is taken. | COVERED | `calls::test_info_lists_the_optional_calls_offered_and_each_one_not_listed_is_501` |
 | [`3.3.info-boards-registered`](procedo_server_contract.md#rule-3.3.info-boards-registered) | 3.3 | `boards_registered` says whether the server registers its boards itself (E4 lists them before any run, E1 refuses another board). | COVERED | `calls::test_a_server_registering_its_boards_lists_them_before_any_run_and_refuses_others` |
-| [`3.3.listed-taken`](procedo_server_contract.md#rule-3.3.listed-taken) | 3.3 | On a server registering its boards, a board E4 lists is registered: a bench's E1, E10 or E15 on it is never refused `unknown_board`. | COVERED | `calls::test_a_server_registering_its_boards_takes_an_import_and_a_replay_on_any_board` |
+| [`3.3.listed-taken`](procedo_server_contract.md#rule-3.3.listed-taken) | 3.3 | On a server registering its boards, a board E4 lists is registered: a bench's E1, E10 or E15 on it is never refused `unknown_board`. | COVERED | `calls::test_a_server_registering_its_boards_lists_them_before_any_run_and_refuses_others`, `calls::test_a_server_registering_its_boards_takes_an_import_and_a_replay_on_any_board` |
 | [`3.3.import-any-call`](procedo_server_contract.md#rule-3.3.import-any-call) | 3.3, 6.7 | On a server registering its boards, an imported report or draft (E10) or board entry (E15) is taken on any board, as an imported run is. | COVERED | `calls::test_a_server_registering_its_boards_takes_an_import_and_a_replay_on_any_board` |
 | [`3.3.import-registers`](procedo_server_contract.md#rule-3.3.import-registers) | 3.3, 6.7 | On a server registering its boards, the new board of an imported report or entry becomes registered: E4 lists it, and a bench's write on it is taken. | COVERED | `calls::test_a_server_registering_its_boards_takes_an_import_and_a_replay_on_any_board` |
 | [`3.3.info-roles`](procedo_server_contract.md#rule-3.3.info-roles) | 3.3 | `user.roles` names the login's roles. | COVERED | `http::test_info_answers_exactly_its_fields_to_a_valid_token` |
@@ -147,6 +147,7 @@ By section (COVERED / all):
 | [`3.4.no-token-401`](procedo_server_contract.md#rule-3.4.no-token-401) | 3.4 | No token: `401`, `WWW-Authenticate: Bearer`, code `invalid_token`, on every call. | COVERED | `conv::test_every_call_without_a_valid_token_is_401` |
 | [`3.4.bad-token-401`](procedo_server_contract.md#rule-3.4.bad-token-401) | 3.4 | A malformed, expired or revoked token: `401`, `Bearer error="invalid_token"`, code `invalid_token` or `expired_token`. | COVERED | `conv::test_every_call_without_a_valid_token_is_401` |
 | [`3.5.every-login-reads`](procedo_server_contract.md#rule-3.5.every-login-reads) | 3.5 | Every login reads, whatever its roles. | COVERED | `conv::test_every_login_reads_whatever_its_roles` |
+| [`3.5.importer-only-with-import`](procedo_server_contract.md#rule-3.5.importer-only-with-import) | 3.5, 3.3, 6.1 | A server not listing `import` grants no login the role `importer`: `/info`'s `user.roles` never names it. | COVERED | `calls::test_a_server_not_listing_import_grants_no_importer_and_refuses_every_import_501` |
 | [`3.5.manager-only-no-push`](procedo_server_contract.md#rule-3.5.manager-only-no-push) | 3.5 | A login holding only `manager` cannot push a run. | COVERED | `conv::test_a_login_holding_only_manager_cannot_push_a_run` |
 | [`3.5.write-needs-role`](procedo_server_contract.md#rule-3.5.write-needs-role) | 3.5 | A write the login's roles do not allow: `403 forbidden`. | COVERED | `conv::test_a_write_the_logins_roles_do_not_allow_is_403_forbidden` |
 | [`3.5.importer-beside-bench`](procedo_server_contract.md#rule-3.5.importer-beside-bench) | 3.5, 6.7 | A login holding `importer` beside `bench` imports with `"import": true` and writes as a bench without it. | COVERED | `pr-raw::test_a_login_holding_importer_beside_bench_imports_and_pushes_as_a_bench` |
@@ -271,6 +272,8 @@ By section (COVERED / all):
 |---|---|---|---|---|
 | [`6.1.core-calls`](procedo_server_contract.md#rule-6.1.core-calls) | 6.1, 8.1-8 | Every server takes the core calls; none answers `501`. | COVERED | `calls::test_info_lists_the_optional_calls_offered_and_each_one_not_listed_is_501` |
 | [`6.1.unlisted-501`](procedo_server_contract.md#rule-6.1.unlisted-501) | 6.1, 4.3, 8.1-8 | An optional call `/info` does not list answers `501 unsupported`, kind `invalid`, never `404`, never served. | COVERED | `calls::test_info_lists_the_optional_calls_offered_and_each_one_not_listed_is_501` |
+| [`6.1.import-unlisted-501`](procedo_server_contract.md#rule-6.1.import-unlisted-501) | 6.1, 6.7 | A server not listing `import` answers an `"import": true` on every call taking one (E1, E6, E7, E10, E15, P10, the deletes of E11, E12) `501 unsupported`, kind `invalid`, nothing written. | COVERED | `calls::test_a_server_not_listing_import_grants_no_importer_and_refuses_every_import_501` |
+| [`6.1.create-unlisted-501`](procedo_server_contract.md#rule-6.1.create-unlisted-501) | 6.1, P11 | A server not listing P11 answers a project's creation `501 unsupported`, kind `invalid`, nothing created: P1 does not list it, P2 is `404`. | COVERED | `calls::test_a_server_not_listing_p11_creates_no_project_and_answers_501` |
 | [`6.1.manager-calls-need-a-manager`](procedo_server_contract.md#rule-6.1.manager-calls-need-a-manager) | 6.1, 3.5 | E11, E12 and E13 are listed only when some login can hold the role `manager`. | HAND | Who may hold a role is the server's own: no call shows it (README hand check 13). |
 | [`6.1.item-not-held-404`](procedo_server_contract.md#rule-6.1.item-not-held-404) | 6.1 | A call naming one item the server does not hold (E3, E9, P7, P8b, L2) is `404`. | COVERED | `ev:an_empty_storage_reads_back_nothing`, `ev:runs_complete_and_incomplete_read_back_with_their_files`, `http::test_an_item_the_server_does_not_hold_is_404_with_its_signature`, `lib:a_download_over_other_content_is_a_conflict_and_over_the_same_no_download`, `pr:a_release_of_an_id_no_test_holds_is_not_found`, `pr:the_tests_read_back_with_their_format_and_files` |
 | [`6.1.unseen-project-empty`](procedo_server_contract.md#rule-6.1.unseen-project-empty) | 6.1 | A project never seen is an empty one for E2, E4, E5, E8; E3 and E9 answer `404`. | COVERED | `pr-raw::test_a_project_never_seen_reads_as_an_empty_one` |
@@ -450,7 +453,7 @@ By section (COVERED / all):
 | [`B1.bare-sha-400`](procedo_server_contract.md#rule-B1.bare-sha-400) | B1, B2 | A `sha256:` prefix in the path: `400`. | COVERED | `pr-raw::test_b1_and_b2_refuse_what_is_not_one_file_in_the_api_storage` |
 | [`B1.api-storage-only`](procedo_server_contract.md#rule-B1.api-storage-only) | B1, B2 | Another backend: `400`; an unknown `store_id`: `404`. | COVERED | `pr-raw::test_b1_and_b2_refuse_what_is_not_one_file_in_the_api_storage` |
 | [`B1.roles-403`](procedo_server_contract.md#rule-B1.roles-403) | B1 | `bench`/`importer` for a project, `bench`/`publisher` for `library`; another login: `403`. | COVERED | `pr-raw::test_b1_takes_a_projects_bytes_from_bench_or_importer_and_the_librarys_from_bench` |
-| [`B1.max-file-413`](procedo_server_contract.md#rule-B1.max-file-413) | B1 | Over `max_file_bytes`: `413`, `details.max_file_bytes`, before the body; never held to `max_upload_bytes`. | COVERED | `pr-raw::test_a_body_over_its_limit_is_413_before_it_is_sent`, `pr-raw::test_b1_is_held_to_max_file_bytes_never_to_max_upload_bytes` |
+| [`B1.max-file-413`](procedo_server_contract.md#rule-B1.max-file-413) | B1 | Over `max_file_bytes`: `413`, `details.max_file_bytes`, before the body; never held to `max_upload_bytes`. | COVERED | `pr-raw::test_b1_is_held_to_max_file_bytes_never_to_max_upload_bytes`, `pr-raw::test_b1_over_max_file_bytes_is_413_before_it_is_sent` |
 | [`B1.digest-422`](procedo_server_contract.md#rule-B1.digest-422) | B1 | A body whose hash is not the path's: `422 digest_mismatch`. | COVERED | `pr-raw::test_b1_and_b2_refuse_what_is_not_one_file_in_the_api_storage` |
 | [`B1.kept-24h`](procedo_server_contract.md#rule-B1.kept-24h) | B1 | An upload nothing references is kept at least 24 hours. | HAND | Needs a day (README hand check 11). |
 | [`B1.already`](procedo_server_contract.md#rule-B1.already) | B1 | `already` when the owner holds the bytes whole; a damaged copy is replaced. | COVERED | `pr-raw::test_a_damaged_blob_is_missing_and_the_bytes_sent_again_replace_it`, `pr-raw::test_b1_saves_bytes_once_then_answers_already` |
@@ -491,7 +494,9 @@ By section (COVERED / all):
 |---|---|---|---|---|
 | [`U1.users`](procedo_server_contract.md#rule-U1.users) | 6.8 | `{users: [{name, display_name}]}`, the active users by display name then name, each by case folding. | COVERED | `calls::test_u1_lists_the_active_users_by_display_name_then_name` |
 | [`U1.operator-known`](procedo_server_contract.md#rule-U1.operator-known) | 6.8, E1, P10 | With U1, a run's `operator` and a release's `released_by` that are no user's name (by case folding) are `409 unknown_operator`, kind `invalid`, nothing written. | COVERED | `calls::test_with_u1_a_replay_is_answered_after_its_operator_left`, `calls::test_with_u1_a_run_or_a_release_naming_none_of_its_users_is_409_unknown_operator` |
-| [`U1.operator-exempt`](procedo_server_contract.md#rule-U1.operator-exempt) | 6.8, 6.7 | With U1, an absent name, an import (a run's or a release's) and a replay of a stored run are taken whatever the users. | COVERED | `calls::test_with_u1_a_replay_is_answered_after_its_operator_left`, `calls::test_with_u1_an_import_keeps_a_name_the_server_does_not_list` |
+| [`U1.unnamed-choice`](procedo_server_contract.md#rule-U1.unnamed-choice) | 6.8 | With U1, a run or a release without `operator` / `released_by` is taken, or refused `409 unknown_operator`, kind `invalid`, nothing written: the server's choice. | COVERED | `calls::test_with_u1_a_run_or_a_release_naming_nobody_is_taken_or_refused_as_the_server_chooses` |
+| [`U1.import-exempt`](procedo_server_contract.md#rule-U1.import-exempt) | 6.8, 6.7 | With U1, an import (a run's or a release's) is taken whatever the users. | COVERED | `calls::test_with_u1_an_import_keeps_a_name_the_server_does_not_list` |
+| [`U1.operator-exempt`](procedo_server_contract.md#rule-U1.operator-exempt) | 6.8 | With U1, a replay of a stored run is answered `already` whatever the users. | COVERED | `calls::test_with_u1_a_replay_is_answered_after_its_operator_left` |
 
 ### 7. Storages the app reaches itself
 

@@ -201,8 +201,10 @@ def push_run(call: Call) -> Answer:
             run_id=run_id,
         )
     # §6.8, §3.3: a replay is already, an import a record: neither is checked
-    if (held is None and not importing) or broken("U1.operator-exempt"):
-        offer.known_operator(state.calls, state.people, run.get("operator"), "operator")
+    imported = importing and not broken("U1.import-exempt")
+    if (held is None and not imported) or broken("U1.operator-exempt"):
+        offer.known_operator(state.calls, state.people, run.get("operator"), "operator",
+                             unnamed_refused=state.unnamed_refused)  # fmt: skip
     if (held is None and not importing) or broken("E1.unknown-board-exempt"):
         _registered_board(state, project, run, version)
     refs = [(item["sha256"], item["size"], item["store_id"]) for item in run["files"]]

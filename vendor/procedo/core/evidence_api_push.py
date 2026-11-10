@@ -213,13 +213,18 @@ def _sent_whole(
     body: bytes,
     wanted: list[str],
     part: Callable[[str], Part],
+    *,
+    importing: bool = False,
 ) -> dict:
     """The write with the parts ``wanted``; a ``409 missing_files`` puts the ones it names
     back and sends the same JSON once more (§3.5). One this push does not hold is ``corrupt``:
-    the JSON names a file the outbox does not have."""
+    the JSON names a file the outbox does not have. *importing*: *body* says ``"import":
+    true`` (the wire refuses it where the server takes no import, contract §6.1)."""
     sending = [part(s) for s in wanted]
     try:
-        return api.call(op, "POST", path, body=body, parts=sending or None).data
+        return api.call(
+            op, "POST", path, body=body, parts=sending or None, importing=importing
+        ).data
     except ApiError as exc:
         missing = exc.details.get("missing") if exc.code == "missing_files" else None
         if not isinstance(missing, list):
@@ -231,7 +236,7 @@ def _sent_whole(
             raise EvidenceError(
                 "corrupt", f"the server lacks a file this push does not hold ({op})"
             ) from lost
-    return api.call(op, "POST", path, body=body, parts=sending or None).data
+    return api.call(op, "POST", path, body=body, parts=sending or None, importing=importing).data
 
 
 def _json(data: bytes, what: str) -> dict:

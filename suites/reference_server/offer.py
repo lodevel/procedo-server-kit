@@ -1,6 +1,8 @@
 """The calls this server offers (contract §6.1): the core calls every server takes, and the
 optional ones it chooses, listed in ``/info``'s ``calls`` (§3.3). An optional call it does not
-list answers ``501 unsupported``, kind ``invalid``, as a call it does not have.
+list answers ``501 unsupported``, kind ``invalid``, as a call it does not have. ``import`` is
+listed the same way: a server not listing it grants no login the importer role and answers an
+``"import": true`` ``501`` too (:func:`granted`, :data:`IMPORT`).
 
 By default the reference server offers every optional call; U1 (the server's users, §6.8) only
 when it is given its users. ``start(..., calls=...)`` names the optional calls a server offers,
@@ -9,6 +11,7 @@ so the conformance kit can be run against a server offering some of them only.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Iterable
 
 from . import faults
@@ -17,18 +20,27 @@ from .validate import name_key
 
 #: The calls every server takes (``/info`` besides), by their ids in §6.1.
 CORE = (
-    "P1", "P2", "P2b", "P7", "P9", "P10", "P11",
+    "P1", "P2", "P2b", "P7", "P9", "P10",
     "E1", "E3", "E4", "E5", "E7", "E8", "E9", "E10", "S1", "B1", "B2",
 )  # fmt: skip
 #: The calls a server may offer or not, by their ids in §6.1.
 OPTIONAL = (
-    "P3", "P4", "P5", "P6", "P8", "P8b",
+    "P3", "P4", "P5", "P6", "P8", "P8b", "P11",
     "E2", "E6", "E11", "E12", "E13", "E14", "E15", "E16", "E17",
-    "L1", "L2", "L3", "S2", "S3", "S4", "U1",
+    "L1", "L2", "L3", "S2", "S3", "S4", "U1", "import",
 )  # fmt: skip
+#: The id of the right to move data in (§6.7): ``"import": true`` on E1, E6, E7, E10, E15, P10
+#: and the deletes of E11 and E12, taken only by a server listing it.
+IMPORT = "import"
 #: A bench's run pushed (E1 without ``import``): what a server registering its boards refuses
 #: on a board it does not list (§3.3). Noted beside the optional calls.
 BENCH_RUN = "E1"
+#: A project's creation (P11, optional, owner 2026-11-10): what a case needing a fresh project
+#: makes whatever the server offers.
+CREATE = "P11"
+#: The calls a case makes whatever the server offers, kept in its record even when it makes
+#: its other optional calls only where they are listed (``offer_aware``).
+MADE_ANYWAY = (BENCH_RUN, CREATE)
 #: The calls this process's reference servers answered, while someone listens (:func:`note`):
 #: the optional ones and a bench's run, in order. None: nobody listens.
 NOTED: list[str] | None = None
@@ -83,12 +95,41 @@ def refuse_unoffered(offered: frozenset[str], call_id: str) -> None:
         return
     if faults.on("6.1.unlisted-501"):
         return  # served as if listed
+    if call_id == CREATE and faults.on("6.1.create-unlisted-501"):
+        return  # a project created where none may be
     raise ApiError(
         501,
         "unsupported",
         "invalid",
         f"This server does not offer {call_id}: /info's calls does not list it.",
     )
+
+
+def refuse_import(offered: frozenset[str], call_id: str) -> None:
+    """An ``"import": true`` on *call_id* (§6.1, §6.7): ``501 unsupported``, as an optional call
+    not listed, where the server does not list ``import``."""
+    if IMPORT in offered or _import_served(call_id):
+        return
+    refuse_unoffered(offered, IMPORT)
+
+
+def _import_served(call_id: str) -> bool:
+    """The fault of 6.1.import-unlisted-501: *call_id* takes an import as if ``import`` were
+    listed. Only the call ``faults.CALL_ENV`` names, else every call but E1 (a server that
+    refuses an imported run alone)."""
+    if not faults.on("6.1.import-unlisted-501"):
+        return False
+    only = faults.only_call()
+    return call_id == only if only else call_id != "E1"
+
+
+def granted(offered: frozenset[str], user):
+    """*user* (a ``state.User``) as this server knows it: without the importer role where the
+    server does not list ``import`` (§3.5, §6.1)."""
+    kept = faults.on("3.5.importer-only-with-import")  # the fault: the role kept
+    if IMPORT in offered or "importer" not in user.roles or kept:
+        return user
+    return dataclasses.replace(user, roles=user.roles - {"importer"})
 
 
 def listed(offered: frozenset[str]) -> list[str]:
@@ -111,11 +152,21 @@ def users_answer(users: list[dict]) -> dict:
 
 
 def known_operator(
-    offered: frozenset[str], users: list[dict] | None, name: object, what: str
+    offered: frozenset[str],
+    users: list[dict] | None,
+    name: object,
+    what: str,
+    *,
+    unnamed_refused: bool = False,
 ) -> None:
     """With U1: *name* (a run's ``operator``, a release's ``released_by``: *what*) is one of the
-    users', by case folding, else ``409 unknown_operator`` (§6.8). Absent: nothing to check."""
-    if "U1" not in offered or users is None or name is None or faults.on("U1.operator-known"):
+    users', by case folding, else ``409 unknown_operator`` (§6.8). Absent: the server's choice,
+    taken unless *unnamed_refused*, then refused as an unknown name."""
+    if "U1" not in offered or users is None or faults.on("U1.operator-known"):
+        return
+    if name is None and faults.on("U1.unnamed-choice"):  # the fault: refused, kind denied
+        raise ApiError(409, "unknown_operator", "denied", f"This server needs the {what}.")
+    if name is None and not unnamed_refused:
         return
     key = name_key(name) if isinstance(name, str) else None
     if key is not None and any(name_key(u["name"]) == key for u in users):

@@ -20,6 +20,7 @@ import uuid
 import warnings
 from contextlib import ExitStack
 from typing import Any
+from urllib.parse import quote
 
 import pytest
 import server_target
@@ -45,7 +46,11 @@ pytestmark = [pytest.mark.servers, pytest.mark.offer_aware]
 
 rule = pytest.mark.rule
 
-TOKENS = {**LOCAL_TOKENS, "t-importer": {"name": "importer-login", "roles": ["importer"]}}
+TOKENS = {
+    **LOCAL_TOKENS,
+    "t-importer": {"name": "importer-login", "roles": ["importer"]},
+    "t-mover": {"name": "mover-login", "roles": ["bench", "importer"]},
+}
 #: A project on your server holding boards registered on it (``boards_registered: true``).
 BOARDS_PROJECT_ENV = "PROCEDO_KIT_BOARDS_PROJECT"
 TEST_ID = "5e0f2a6b-1c3d-4e8f-9a0b-1c2d3e4f5a6b"
@@ -76,6 +81,7 @@ def probes(pid: str) -> dict[str, list[tuple[str, str, str, dict | None]]]:
             ("GET", f"projects/{pid}/releases/{TEST_ID}/1", "", None),
             ("POST", f"projects/{pid}/releases/{TEST_ID}/1/read", "", {"have": []}),
         ],
+        "P11": [("POST", "projects", "", {"format_version": 1})],
         "E2": [("GET", "runs", f"project_id={pid}", None)],
         "E6": [
             (
@@ -108,6 +114,7 @@ def probes(pid: str) -> dict[str, list[tuple[str, str, str, dict | None]]]:
         "S3": [("GET", "storages/999999/to_delete", "", None)],
         "S4": [("POST", "storages/999999/deleted", "", {"set_aside": {}})],
         "U1": [("GET", "users", "", None)],
+        "import": [("POST", f"projects/{pid}/runs", "", {"format_version": 2, "import": True})],
     }
 
 
@@ -127,7 +134,6 @@ def core_probes(pid: str, store: int) -> dict[str, list[tuple[str, str, str, dic
         ],
         "P9": [("POST", f"projects/{pid}/changes", "", {"changes": []})],
         "P10": [("POST", f"projects/{pid}/releases/{TEST_ID}", "", {"format": "nothing"})],
-        "P11": [("POST", "projects", "", {"format_version": 1})],
         "E1": [("POST", f"projects/{pid}/runs", "", {"format_version": 2})],
         "E3": [
             ("GET", f"projects/{pid}/runs/{RUN_ID}", "", None),
@@ -188,13 +194,14 @@ def test_info_lists_the_optional_calls_offered_and_each_one_not_listed_is_501(tm
             assert len(set(calls)) == len(calls), f"{calls}: a call listed twice"
             assert not set(calls) & set(CORE), f"{calls}: a core call listed"
             assert set(calls) <= set(OPTIONAL), f"{calls}: not optional calls of the contract"
-            for call, requests in probes(server_target.fresh_id()).items():
-                for method, path, query, body in requests:
-                    reply = api.call(method, path, json_body=body, query=query)
-                    if call in calls:
-                        assert reply.status != 501, f"{call} is listed: {reply}"
-                    else:
-                        refused(reply, 501, "invalid", "unsupported")
+            with server_target.unrecorded():  # every optional call, listed or not: any server
+                for call, requests in probes(server_target.fresh_id()).items():
+                    for method, path, query, body in requests:
+                        reply = api.call(method, path, json_body=body, query=query)
+                        if call in calls:
+                            assert reply.status != 501, f"{call} is listed: {reply}"
+                        else:
+                            refused(reply, 501, "invalid", "unsupported")
             # A core call is never 501, whatever the server offers.
             storages = ok(api.call("GET", "storages"))["storages"]
             assert storages, "S1 lists no storage"
@@ -252,6 +259,224 @@ def test_without_p3_every_change_token_is_empty_and_with_it_none_is(tmp_path, tw
                 assert all(t == "" for t in tokens.values()), tokens
 
 
+# ---- §6.1, §6.3 A server creating no project -------------------------------------------------
+
+
+@rule("6.1.create-unlisted-501")
+def test_a_server_not_listing_p11_creates_no_project_and_answers_501(tmp_path, twin):
+    """§6.1, P11: on a server whose /info does not list P11, a project's creation is ``501
+    unsupported``, kind ``invalid``, nothing created: P1 does not list it, P2 answers ``404``.
+    Against the reference server without P11; against yours when its /info does not list it."""
+    without_p11 = {"calls": [c for c in OPTIONAL if c != "P11"]}
+    with ExitStack() as stack:
+        bases = [
+            base
+            for base in servers(stack, tmp_path, without_p11=without_p11)
+            if "P11" not in server_target.offered(base)
+        ]
+        if not bases:
+            server_target.skip("the server offers P11 (in /info's calls): it creates projects")
+        for base in bases:
+            api = api_of(stack, base, twin)
+            pid = server_target.fresh_id()
+            body = project_body(pid, str(uuid.uuid4()))
+            refused(api.call("POST", "projects", json_body=body), 501, "invalid", "unsupported")
+            listed = [p["project_id"] for p in ok(api.call("GET", "projects"))["projects"]]
+            assert pid not in listed, ("a refused P11 listed its project", listed)
+            refused(api.call("GET", f"projects/{pid}"), 404, "not_found")
+
+
+# ---- §6.1, §6.7 A server taking no import -----------------------------------------------------
+
+
+def _import_logins() -> list[dict]:
+    """The logins an import is sent from: the bench's, and the importer's and the mover's when
+    the kit has their tokens (always against the reference server)."""
+    logins = [{"role": "bench"}]
+    for role in ("importer", "mover"):
+        variable, local = server_target.TOKENS[role]
+        found = os.environ.get(variable, "").strip() if server_target.external() else local
+        if found:
+            logins.append({"role": None, "token": found})
+    return logins
+
+
+def _writable_board(api: Api) -> tuple[str, dict, str] | None:
+    """``(project, part number and revision, serial)`` of a board a bench may write on: a
+    fresh one; on a server registering its boards, one ``PROCEDO_KIT_BOARDS_PROJECT`` holds
+    (None when unset, a reference server's own included)."""
+    names = {"part_number": "PN-1", "board_revision": "A"}
+    if not ok(api.call("GET", "info"))["boards_registered"]:
+        return server_target.fresh_id(), names, f"SN-{server_target.fresh_suffix()}"
+    pid = os.environ.get(BOARDS_PROJECT_ENV, "").strip() if server_target.external() else ""
+    if not pid:
+        return None
+    held = ok(api.call("GET", f"projects/{pid}/boards"))["boards"][0]
+    names = {k: held[k] for k in ("part_number", "board_revision") if held.get(k)}
+    return pid, names, held["serial"]
+
+
+def _artifact(api: Api, pid: str, kind: str, name: str, serial: str, names: dict):
+    """E9 of the artifact *kind*/*name* on the board *serial* with *names*."""
+    query = f"serial={quote(serial, safe='')}&" + board_query(
+        names.get("part_number") or "", names.get("board_revision") or ""
+    )
+    return api.call("GET", f"projects/{pid}/artifacts/{kind}/{seg(name)}", query=query)
+
+
+def _imports_refused(api: Api, base: str, logins: list[dict]) -> list[str]:
+    """Every call taking an import that the server offers, sent with ``"import": true`` from
+    each of *logins*: each ``501 unsupported``, kind ``invalid``, and nothing written, read back
+    after. The calls not checked, and why."""
+    listed, unchecked = server_target.offered(base), []
+    project_id, tid = server_target.fresh_id(), str(uuid.uuid4())
+    created = "P11" in listed  # else P10's import goes to a project never created: 501 first
+    if created:
+        with server_target.unrecorded():
+            ok(api.call("POST", "projects", json_body=project_body(project_id, tid)))
+    board = _writable_board(api)
+    if board is None:
+        unchecked.append(f"the imports on a held run and draft (E6, E7, E11, E12): set "
+                         f"{BOARDS_PROJECT_ENV} to a project holding a board registered on it")  # fmt: skip
+        names = {"part_number": "PN-1", "board_revision": "A"}
+        pid, serial = server_target.fresh_id(), f"SN-{server_target.fresh_suffix()}"
+        held_run = held_draft = None
+    else:
+        pid, names, serial = board
+        held_run = run_body(tid, serial=serial, day=20)
+        held_run.update(names)
+        ok(api.call("POST", f"projects/{pid}/runs", json_body=held_run))
+        held_draft = _draft(serial, names)
+        ok(api.call("POST", f"projects/{pid}/artifacts", json_body=held_draft))
+    store = _api_store(api)
+    if store is None:
+        unchecked.append("an imported report (E10 with its file): the server lists no api storage")
+    path_board, query = _entries_path(pid, serial, names)
+    before = ok(api.call("GET", path_board.removesuffix("/entries"), query=query))
+    written: list[tuple[str, Any]] = []  # what must not be there afterwards
+
+    def refused_501(reply, what: str) -> None:
+        assert reply.status == 501, f"{what} with import: true, no import listed: {reply}"
+        refused(reply, 501, "invalid", "unsupported")
+
+    def deletes(login: dict) -> None:
+        """The imported deletes (E11, E12, when offered) of the held run and draft by *login*:
+        a manager's included, so a server taking them from a manager is caught by its 501, not
+        by a 403 for the bench's login."""
+        gone = {"import": True, "machine_id": MACHINE, "reason": "moved in",
+                "deleted_at": "2020-02-02T02:02:02Z"}  # fmt: skip
+        run_path = f"projects/{pid}/runs/{held_run['run_id']}"
+        if "E11" in listed:
+            refused_501(api.call("POST", f"{run_path}/delete", json_body=gone, **login), "E11")
+        if "E12" in listed:
+            named = {"kind": "draft", "serial": serial, "name": held_draft["name"], **names}
+            reply = api.call("POST", f"projects/{pid}/artifacts/delete",
+                             json_body={**gone, **named}, **login)  # fmt: skip
+            refused_501(reply, "E12")
+
+    for login in logins:
+        run = {**run_body(tid, serial=serial, day=21), **names, "import": True,
+               "pushed_at": "2020-01-02T03:04:05Z"}  # fmt: skip
+        refused_501(api.call("POST", f"projects/{pid}/runs", json_body=run, **login), "E1")
+        written.append(("run", run["run_id"]))
+        draft = {**_draft(serial, names), "import": True}
+        reply = api.call("POST", f"projects/{pid}/artifacts", json_body=draft, **login)
+        refused_501(reply, "E10, a draft")
+        written.append(("draft", draft["name"]))
+        if store is not None:
+            data = f"<html>kit import {server_target.fresh_suffix()}</html>".encode()
+            name = f"kit-{sha(data)[:8]}.html"
+            report = report_body(store, data, serial=serial, name=name)
+            for key in ("part_number", "board_revision"):
+                report.pop(key, None)
+            report.update(names, generation=4)
+            report["import"] = True
+            reply = api.call("POST", f"projects/{pid}/artifacts", json_body=report,
+                             parts={f"sha256:{sha(data)}": data}, **login)  # fmt: skip
+            refused_501(reply, "E10, a report")
+            written.append(("report", name))
+        if "E15" in listed:
+            body = {"import": True, "entries": [board_entry(received_at="2020-01-01T00:00:00Z")]}
+            reply = api.call("POST", path_board, query=query, json_body=body, **login)
+            refused_501(reply, "E15")
+        release = {"import": True, "version": 7, "test": "T1", "released_at": "2020-03-03T03:03:03Z",
+                   "format": "text", "fingerprint": "a" * 64, "content": "b" * 64,
+                   "documents": {"procedure_text.md": text_file("# T1\n")}}  # fmt: skip
+        reply = api.call("POST", f"projects/{project_id}/releases/{tid}", json_body=release,
+                         **login)  # fmt: skip
+        refused_501(reply, "P10")
+        if held_run is None:
+            continue
+        run_path = f"projects/{pid}/runs/{held_run['run_id']}"
+        entry = {"entry_id": uuid.uuid4().hex, "kind": "comment", "key": "test", "text": "kit",
+                 "replaces": None, "by": "kit", "machine_id": MACHINE,
+                 "saved_at": "2026-04-01T10:00:00Z", "received_at": "2020-01-01T00:00:00Z"}  # fmt: skip
+        body = {"import": True, "entries": [entry]}
+        refused_501(api.call("POST", f"{run_path}/annotation", json_body=body, **login), "E7")
+        if "E6" in listed:
+            current = f"projects/{pid}/boards/{seg(serial)}/tests/{tid}/current"
+            body = {"import": True, "run_id": None, "replaces": None, "machine_id": MACHINE,
+                    "updated_at": "2020-01-01T00:00:00Z"}  # fmt: skip
+            refused_501(api.call("POST", current, query=query, json_body=body, **login), "E6")
+        deletes(login)
+    if held_run is not None:  # a manager's too: a delete it may make is what must be 501
+        deletes({"role": "manager"})
+    # Nothing written: no run, artifact, entry or release; the held run and draft as they were.
+    for kind, name in written:
+        if kind == "run":
+            refused(api.call("GET", f"projects/{pid}/runs/{name}"), 404, "not_found")
+        else:
+            refused(_artifact(api, pid, kind, name, serial, names), 404, "not_found")
+    after = ok(api.call("GET", path_board.removesuffix("/entries"), query=query))
+    assert server_target.kit_tests(after) == server_target.kit_tests(before), (
+        "a refused import changed the board", before, after)  # fmt: skip
+    if created:
+        project = ok(api.call("POST", f"projects/{project_id}/read", json_body={"have": []}))
+        assert not (project.get("releases") or {}).get(tid), ("a refused import released", project)
+    else:
+        refused(api.call("GET", f"projects/{project_id}"), 404, "not_found")
+    if held_run is not None:
+        read = ok(api.call("GET", f"projects/{pid}/runs/{held_run['run_id']}"))
+        assert not read.get("deleted_at"), ("a refused import deleted the run", read)
+        notes = (read.get("annotation") or {}).get("entries") or []
+        assert notes == [], ("a refused import annotated the run", notes)
+        draft = ok(_artifact(api, pid, "draft", held_draft["name"], serial, names))
+        assert not draft.get("deleted_at"), ("a refused import deleted the draft", draft)
+    return unchecked
+
+
+@pytest.mark.boards_aware  # a board of PROCEDO_KIT_BOARDS_PROJECT where the server registers them
+@rule("6.1.import-unlisted-501", "3.5.importer-only-with-import")
+def test_a_server_not_listing_import_grants_no_importer_and_refuses_every_import_501(
+    tmp_path, twin
+):
+    """§6.1, §3.5: on a server whose /info does not list ``import``, no login holds the role
+    ``importer``, and every call taking an import that it offers (E1, E6, E7, E10 a draft and a
+    report, E15, P10, the deletes of E11 and E12) answers ``"import": true`` ``501
+    unsupported``, kind ``invalid``, nothing written: from the bench's login, and from the
+    importer's and the mover's when the kit has their tokens. Against the reference server
+    without import; against yours when its /info does not list it."""
+    without_import = {"calls": [c for c in OPTIONAL if c != "import"]}
+    with ExitStack() as stack:
+        bases = [
+            base
+            for base in servers(stack, tmp_path, without_import=without_import)
+            if "import" not in server_target.offered(base)
+        ]
+        if not bases:
+            server_target.skip("the server offers import (in /info's calls): it takes imports")
+        unchecked: list[str] = []
+        for base in bases:
+            api = api_of(stack, base, twin)
+            logins = _import_logins()
+            for login in logins:
+                roles = ok(api.call("GET", "info", **login))["user"]["roles"]
+                assert "importer" not in roles, ("no import, yet the role importer", roles)
+            unchecked += _imports_refused(api, base, logins)
+        if unchecked:
+            server_target.skip("checked all but " + "; ".join(sorted(set(unchecked))))
+
+
 # ---- §6.7 An import on a server without E6 ---------------------------------------------------
 
 
@@ -272,10 +497,13 @@ def test_without_e6_an_imported_run_moves_the_pointer_by_the_rule_in_any_order(t
         bases = [
             base
             for base in servers(stack, tmp_path, without_e6=without_e6)
-            if "E6" not in server_target.offered(base)
+            if "E6" not in server_target.offered(base) and "import" in server_target.offered(base)
         ]
         if not bases:
-            server_target.skip("the server offers E6: an imported run moves no pointer there")
+            server_target.skip(
+                "the server offers E6 (an imported run moves no pointer there), or does not "
+                "offer import (not in /info's calls)"
+            )
         for base in bases:
             api = api_of(stack, base, twin)
             test_id = str(uuid.uuid4())
@@ -317,10 +545,14 @@ def test_without_e6_an_imported_delete_hands_the_pointer_on_as_a_benchs_does(tmp
         bases = [
             base
             for base in servers(stack, tmp_path, without_e6=without_e6)
-            if "E6" not in server_target.offered(base) and "E11" in server_target.offered(base)
+            if "E6" not in server_target.offered(base)
+            and {"E11", "import"} <= server_target.offered(base)
         ]
         if not bases:
-            server_target.skip("the server offers E6, or no E11: this case cannot be made there")
+            server_target.skip(
+                "the server offers E6, or not E11 and import (in /info's calls): this case "
+                "cannot be made there"
+            )
         for base in bases:
             api = api_of(stack, base, twin)
             test_id, pid = str(uuid.uuid4()), server_target.fresh_id()
@@ -393,8 +625,8 @@ def _project(api: Api):
 def test_with_u1_a_run_or_a_release_naming_none_of_its_users_is_409_unknown_operator(api):
     """A server listing U1: a run's ``operator`` and a release's ``released_by`` that are no
     user's ``name`` (compared by case folding) are ``409 unknown_operator``, kind ``invalid``,
-    nothing written; a user's name in another case is taken and kept as sent; none at all is
-    taken."""
+    nothing written; a user's name in another case is taken and kept as sent (none at all
+    is the server's choice: the next case)."""
     server_target.needs(api.base_url, "U1")
     pid, tid, files = _project(api)
     nobody = f"nobody-{server_target.fresh_suffix()}"
@@ -406,8 +638,6 @@ def test_with_u1_a_run_or_a_release_naming_none_of_its_users_is_409_unknown_oper
     assert ok(api.call("POST", f"projects/{pid}/runs", json_body=shouted))["status"] == "saved"
     read = ok(api.call("GET", f"projects/{pid}/runs/{shouted['run_id']}"))
     assert read["operator"] == "ALICE", read
-    unnamed = run_body(tid, day=28)
-    assert ok(api.call("POST", f"projects/{pid}/runs", json_body=unnamed))["status"] == "saved"
 
     release = {"format": "text", "fingerprint": "a" * 64, "content": "b" * 64, "files": files}
     path = f"projects/{pid}/releases/{tid}"
@@ -419,11 +649,48 @@ def test_with_u1_a_run_or_a_release_naming_none_of_its_users_is_409_unknown_oper
     assert again["version"] == 2, again
 
 
-@rule("U1.operator-exempt")
+@rule("U1.unnamed-choice")
+def test_with_u1_a_run_or_a_release_naming_nobody_is_taken_or_refused_as_the_server_chooses(
+    tmp_path, twin
+):
+    """§6.8: on a server listing U1, a run without ``operator`` and a release without
+    ``released_by`` are each taken, or refused ``409 unknown_operator``, kind ``invalid``, with
+    nothing written: the server's choice. Anything else fails (a refusal that wrote, another
+    code or kind, a 5xx). Against the reference server taking them, then refusing them."""
+    with ExitStack() as stack:
+        for base in servers(stack, tmp_path, refusing={"unnamed_refused": True}):
+            server_target.needs(base, "U1")
+            api = api_of(stack, base, twin)
+            pid, tid, files = _project(api)
+            run = run_body(tid, day=28)
+            run.pop("operator", None)
+            reply = api.call("POST", f"projects/{pid}/runs", json_body=run)
+            stored = api.call("GET", f"projects/{pid}/runs/{run['run_id']}")
+            if reply.status == 200:
+                assert ok(reply)["status"] == "saved", reply
+                assert ok(stored).get("operator") is None, stored
+            else:
+                refused(reply, 409, "invalid", "unknown_operator")
+                refused(stored, 404, "not_found")
+            release = {"format": "text", "fingerprint": "a" * 64, "content": "b" * 64,
+                       "files": files}  # fmt: skip
+            reply = api.call("POST", f"projects/{pid}/releases/{tid}", json_body=release)
+            read = ok(api.call("POST", f"projects/{pid}/read", json_body={"have": []}))
+            held = (read.get("releases") or {}).get(tid) or []
+            if reply.status == 200:
+                made = ok(reply)
+                assert made["version"] == 1 and made.get("released_by") is None, made
+                assert [r["version"] for r in held] == [1], held
+            else:
+                refused(reply, 409, "invalid", "unknown_operator")
+                assert held == [], ("a refused release was kept", held)
+
+
+@rule("U1.import-exempt")
 def test_with_u1_an_import_keeps_a_name_the_server_does_not_list(api):
     """Not checked: an import (a name recorded long ago, §6.7): a run whose ``operator`` and a
     release whose ``released_by`` are no user's are taken from the importer's login, as sent."""
-    server_target.needs(api.base_url, "U1")
+    server_target.needs(api.base_url, "U1", "import")
     importer = server_target.token("importer")
     pid, tid, _files = _project(api)
     nobody = f"nobody-{server_target.fresh_suffix()}"
@@ -446,6 +713,7 @@ def test_with_u1_a_replay_is_answered_after_its_operator_left(api):
     """Not checked: a replay of a stored run, once its operator is no user any more; a new run
     under that name is refused."""
     server_target.local_only("it changes the server's users")
+    server_target.needs(api.base_url, "U1")
     pid, tid, _files = _project(api)
     run = run_body(tid, day=27, operator="carol")
     ok(api.call("POST", f"projects/{pid}/runs", json_body=run))
@@ -463,7 +731,7 @@ def test_with_u1_a_replay_is_answered_after_its_operator_left(api):
 @pytest.mark.boards_aware
 @pytest.mark.boards_unregistered  # the kit registers none of its boards
 @rule("3.3.info-boards-registered", "E4.registered-listed", "E1.unknown-board",
-      "E10.unknown-board", "E15.unknown-board", "4.3.409-invalid")  # fmt: skip
+      "E10.unknown-board", "E15.unknown-board", "3.3.listed-taken", "4.3.409-invalid")  # fmt: skip
 def test_a_server_registering_its_boards_lists_them_before_any_run_and_refuses_others(
     tmp_path, twin
 ):
@@ -600,6 +868,56 @@ def _board_writes(
             assert [r["status"] for r in ok(reply)["results"]] == ["saved"], reply
 
 
+def _imports_register_their_boards(api: Api, base: str, pid: str, tid: str, names: dict) -> None:
+    """§3.3, a server registering its boards and taking imports: an import (a run, E1; a draft
+    and a report, E10; an entry, E15) on a board E4 does not list is taken, and its board is
+    listed from then on and takes a bench's run."""
+    serial = f"SN-MOVED-{server_target.fresh_suffix()}"
+    imported = {**run_body(tid, serial=serial), "import": True}
+    reply = api.call("POST", f"projects/{pid}/runs", role=None,
+                     token=server_target.token("importer"), json_body=imported)  # fmt: skip
+    assert ok(reply)["status"] == "saved", reply
+    listed = [fold(b["serial"]) for b in ok(api.call("GET", f"projects/{pid}/boards"))[
+        "boards"
+    ]]  # fmt: skip
+    assert fold(serial) in listed, listed
+    # Registered so: a bench's run on that board is taken, never unknown_board.
+    bench = run_body(tid, serial=serial, day=25)
+    assert ok(api.call("POST", f"projects/{pid}/runs", json_body=bench))["status"] == "saved"
+    # An imported draft (E10) and an imported entry (E15), each on a board of its own:
+    # taken, each board listed from then on and taking a bench's run.
+    importer = {"role": None, "token": server_target.token("importer")}
+    serials = [f"SN-DRAFT-{server_target.fresh_suffix()}"]
+    draft = {**_draft(serials[0], names), "import": True}
+    reply = api.call("POST", f"projects/{pid}/artifacts", json_body=draft, **importer)
+    assert ok(reply)["status"] == "saved", reply
+    if server_target.offers(base, "E15"):
+        serials.append(f"SN-ENTRY-{server_target.fresh_suffix()}")
+        path, query = _entries_path(pid, serials[-1], names)
+        body = {"import": True, "entries": [board_entry()]}
+        reply = api.call("POST", path, query=query, json_body=body, **importer)
+        assert [r["status"] for r in ok(reply)["results"]] == ["saved"], reply
+    store = _api_store(api)  # an imported report (E10) too, its file a part
+    if store is None:
+        warnings.warn(
+            "the server lists no api storage: the imported report (E10) is not checked, "
+            "only the imported draft",
+            stacklevel=1,
+        )
+    else:
+        serials.append(f"SN-REPORT-{server_target.fresh_suffix()}")
+        reply = _report_push(api, pid, store, serials[-1], names, **importer)
+        assert ok(reply)["status"] == "saved", reply
+    listed = [fold(b["serial"]) for b in ok(api.call("GET", f"projects/{pid}/boards"))[
+        "boards"
+    ]]  # fmt: skip
+    for day, each in enumerate(serials, start=20):
+        assert fold(each) in listed, ("an import's board not listed", each, listed)
+        on_it = run_body(tid, serial=each, day=day)
+        reply = api.call("POST", f"projects/{pid}/runs", json_body=on_it)
+        assert ok(reply)["status"] == "saved", reply
+
+
 @pytest.mark.boards_aware
 @pytest.mark.boards_unregistered  # the kit registers none of its boards
 @rule("E1.unknown-board-exempt", "3.3.listed-taken", "3.3.import-any-call", "3.3.import-registers")
@@ -624,54 +942,17 @@ def test_a_server_registering_its_boards_takes_an_import_and_a_replay_on_any_boa
                     server_target.skip(f"set {BOARDS_PROJECT_ENV} to a project holding a board "
                                        "registered on your server")  # fmt: skip
             tid = str(uuid.uuid4())
-            serial = f"SN-MOVED-{server_target.fresh_suffix()}"
-            imported = {**run_body(tid, serial=serial), "import": True}
-            reply = api.call("POST", f"projects/{pid}/runs", role=None,
-                             token=server_target.token("importer"), json_body=imported)  # fmt: skip
-            assert ok(reply)["status"] == "saved", reply
-            listed = [fold(b["serial"]) for b in ok(api.call("GET", f"projects/{pid}/boards"))[
-                "boards"
-            ]]  # fmt: skip
-            assert fold(serial) in listed, listed
-            # Registered so: a bench's run on that board is taken, never unknown_board.
-            bench = run_body(tid, serial=serial, day=25)
-            assert (
-                ok(api.call("POST", f"projects/{pid}/runs", json_body=bench))["status"] == "saved"
-            )
-            # An imported draft (E10) and an imported entry (E15), each on a board of its own:
-            # taken, each board listed from then on and taking a bench's run.
-            importer = {"role": None, "token": server_target.token("importer")}
             names = {"part_number": "PN-1", "board_revision": "A"}
-            serials = [f"SN-DRAFT-{server_target.fresh_suffix()}"]
-            draft = {**_draft(serials[0], names), "import": True}
-            reply = api.call("POST", f"projects/{pid}/artifacts", json_body=draft, **importer)
-            assert ok(reply)["status"] == "saved", reply
-            if server_target.offers(base, "E15"):
-                serials.append(f"SN-ENTRY-{server_target.fresh_suffix()}")
-                path, query = _entries_path(pid, serials[-1], names)
-                body = {"import": True, "entries": [board_entry()]}
-                reply = api.call("POST", path, query=query, json_body=body, **importer)
-                assert [r["status"] for r in ok(reply)["results"]] == ["saved"], reply
-            store = _api_store(api)  # an imported report (E10) too, its file a part
-            if store is None:
-                warnings.warn(
-                    "the server lists no api storage: the imported report (E10) is not checked, "
-                    "only the imported draft",
-                    stacklevel=1,
-                )
-            else:
-                serials.append(f"SN-REPORT-{server_target.fresh_suffix()}")
-                reply = _report_push(api, pid, store, serials[-1], names, **importer)
-                assert ok(reply)["status"] == "saved", reply
-            listed = [fold(b["serial"]) for b in ok(api.call("GET", f"projects/{pid}/boards"))[
-                "boards"
-            ]]  # fmt: skip
-            for day, each in enumerate(serials, start=20):
-                assert fold(each) in listed, ("an import's board not listed", each, listed)
-                on_it = run_body(tid, serial=each, day=day)
-                reply = api.call("POST", f"projects/{pid}/runs", json_body=on_it)
-                assert ok(reply)["status"] == "saved", reply
+            takes_import = server_target.offers(base, "import")
+            if takes_import:
+                _imports_register_their_boards(api, base, pid, tid, names)
             if running is None:
+                if not takes_import:
+                    server_target.skip(
+                        "the server does not offer import (not in /info's calls): the imports on "
+                        "a board it does not list are not checked, and a replay needs a board "
+                        "only the reference server unregisters"
+                    )
                 return
             # Against the reference server only: no call of the contract unregisters a board.
             run = run_body(tid, serial="SN-REG", day=27)

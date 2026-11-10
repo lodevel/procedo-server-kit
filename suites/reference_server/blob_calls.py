@@ -70,7 +70,11 @@ def upload(call: Call) -> Answer:
     checked with the request's form (``server._parse_body``)."""
     store_id, owner, sha = _blob(call)
     allowed = UPLOADERS[LIBRARY if owner == LIBRARY else "project"]
-    if not call.user.roles & allowed and not call.state.broken("B1.roles-403"):
+    broken = call.state.broken("B1.roles-403")  # the fault: any login uploads
+    one_half = broken and faults.only_call() == "bench"  # its other half: a bench refused
+    if one_half and owner != LIBRARY and "bench" in call.user.roles:
+        raise forbidden("An upload for this owner needs the importer role.")
+    if not call.user.roles & allowed and (one_half or not broken):
         needs = " or ".join(sorted(allowed))
         raise forbidden(f"An upload for this owner needs the {needs} role.")
     _api_storage(call, store_id)

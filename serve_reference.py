@@ -22,7 +22,8 @@ server gives up on the rest.
 It offers every optional call of the contract (§6.1), U1 listing the users the kit's runs name
 (``server_target.KIT_USERS``). ``--calls`` names those it offers instead (``none``: the core
 calls only): the others answer ``501 unsupported``, so the kit can be tried against a server
-offering some of them only.
+offering some of them only. ``import`` is named the same way: without it, no login holds the
+importer role and an ``"import": true`` answers ``501`` (§6.1).
 """
 
 from __future__ import annotations
