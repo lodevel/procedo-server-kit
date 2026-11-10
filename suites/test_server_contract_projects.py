@@ -20,6 +20,7 @@ saying so. The cases reading the reference server's own disk run against it alon
 
 from __future__ import annotations
 
+import functools
 import gzip
 import hashlib
 import io
@@ -57,6 +58,7 @@ KINDS = {
     "missing_files": "invalid",
     "exists": "invalid",
     "changed": "invalid",
+    "same_as_release": "invalid",
     "version_exists": "invalid",
     "too_large": "invalid",
     "forbidden": "denied",
@@ -154,7 +156,9 @@ class Reply:
                 name, _, value = line.partition(":")
                 headers[name.strip()] = value.strip()
             name = _param(headers.get("Content-Disposition", ""), "content-disposition", "name")
-            out.append((name or "", _undone(data, headers)))
+            # §2.12: no part carries a Content-Encoding, the json part is plain JSON
+            assert "Content-Encoding" not in headers, f"part {name} carries a Content-Encoding"
+            out.append((name or "", data))
         assert out and out[0][0] == "json", "the first part of a multipart answer is json"
         return out
 
@@ -442,6 +446,19 @@ class Project:
     def token(self) -> str:
         return self.read()["token"]
 
+    def releases(self, test_id: str) -> list[dict]:
+        """The releases filed under *test_id*, oldest first, as P2 answers them (a core call:
+        P8 lists the same, on a server offering it)."""
+        return self.read()["releases"].get(test_id, [])
+
+    def mark(self) -> Any:
+        """What :meth:`nothing_since` compares with: the change token on a server offering P3;
+        on any other, the project as P2 answers it now (its files and its releases)."""
+        if server_target.offers(self.api.base_url, "P3"):
+            return self.token()
+        found = self.read()
+        return {"files": found["files"], "releases": found["releases"]}
+
     def since(self, token: str) -> dict:
         return ok(self.api.get(self.path(), {"since": token}))
 
@@ -456,10 +473,17 @@ class Project:
     def release(self, test_id: str, body: dict, *, role: str = "bench") -> Reply:
         return self.api.post(self.path(f"releases/{test_id}"), body, role=role)
 
-    def nothing_since(self, token: str) -> None:
-        """Nothing was written since *token*: P3 brings no file, no delete, no release."""
-        changes = self.since(token)
-        assert (changes["files"], changes["deleted"], changes.get("releases")) == ({}, [], {})
+    def nothing_since(self, mark: Any) -> None:
+        """Nothing was written since *mark* (:meth:`mark`): P3 brings no file, no delete, no
+        release; on a server without P3, P2 answers the files and releases it answered then.
+        The P3 made only on a server offering it, the case runs on any server."""
+        if isinstance(mark, str):
+            with server_target.unrecorded():
+                changes = self.since(mark)
+            assert (changes["files"], changes["deleted"], changes.get("releases")) == ({}, [], {})
+        else:
+            found = self.read()
+            assert {"files": found["files"], "releases": found["releases"]} == mark
 
 
 def a_test(test_id: str = T1_ID, folder: str = "T1") -> dict[str, str]:
@@ -554,20 +578,24 @@ def test_a_project_known_only_by_its_evidence_is_no_project_of_the_project_calls
     p = f"projects/{pid}"
     reads = [
         api.get(p),
-        api.get(p, {"since": "anything"}),
         api.post(f"{p}/read", {"have": []}),
-        api.get(f"{p}/tests"),
-        api.get(f"{p}/tests", {"names": "T1"}),
-        api.post(f"{p}/tests/read", {"names": ["T1"], "have": []}),
         api.get(f"{p}/tests/T1"),
         api.post(f"{p}/tests/T1/read", {"have": []}),
-        api.get(f"{p}/releases/{T1_ID}"),
-        api.get(f"{p}/releases/{T1_ID}/1"),
-        api.post(f"{p}/releases/{T1_ID}/1/read", {"have": []}),
         api.post(f"{p}/releases/{T1_ID}", a_release({"tests/T1/test.json": ZERO})),
         # P9 answers before reading the body: one that is not even JSON.
         api.request("POST", f"{p}/changes", body=b"{not json", content_type="application/json"),
     ]
+    optional = [  # each made only when the server offers it
+        ("P3", lambda: api.get(p, {"since": "anything"})),
+        ("P4", lambda: api.get(f"{p}/tests")),
+        ("P5", lambda: api.get(f"{p}/tests", {"names": "T1"})),
+        ("P6", lambda: api.post(f"{p}/tests/read", {"names": ["T1"], "have": []})),
+        ("P8", lambda: api.get(f"{p}/releases/{T1_ID}")),
+        ("P8b", lambda: api.get(f"{p}/releases/{T1_ID}/1")),
+        ("P8b", lambda: api.post(f"{p}/releases/{T1_ID}/1/read", {"have": []})),
+    ]
+    with server_target.unrecorded():
+        reads += [read() for call, read in optional if server_target.offers(api.base_url, call)]
     for reply in reads:
         refused(reply, 404, "not_found")
     made = api.create(a_test(), pid=pid)
@@ -580,14 +608,17 @@ def test_a_project_known_only_by_its_evidence_is_no_project_of_the_project_calls
 
 @pytest.mark.rule("6.1.unseen-project-empty")
 def test_a_project_never_seen_reads_as_an_empty_one(api):
+    """E4, E5, E3, E8 and E9 on any server; E2 when it offers it."""
     pid = server_target.fresh_id()
-    assert ok(api.get("runs", {"project_id": pid}))["runs"] == []
     assert ok(api.get(f"projects/{pid}/boards"))["boards"] == []
     assert board_results(api, pid)["tests"] == []
-    assert ok(api.get(f"projects/{pid}/artifacts"))["artifacts"] == []
     refused(api.get(f"projects/{pid}/runs/{a_run(1)['run_id']}"), 404, "not_found")
+    assert ok(api.get(f"projects/{pid}/artifacts"))["artifacts"] == []
     query = {"serial": SERIAL, **board_query()}
     refused(api.get(f"projects/{pid}/artifacts/report/r.html", query), 404, "not_found")
+    if server_target.offers(api.base_url, "E2"):
+        with server_target.unrecorded():
+            assert ok(api.get("runs", {"project_id": pid}))["runs"] == []
 
 
 # ---- §6.2 How file bytes travel ---------------------------------------------------------------
@@ -596,7 +627,7 @@ def test_a_project_never_seen_reads_as_an_empty_one(api):
 @pytest.mark.rule("6.2.request-content-type")
 def test_a_body_neither_json_nor_multipart_is_400(api):
     project = api.create(a_test())
-    before = project.token()
+    before = project.mark()
     change = {"path": "tests/T1/notes.md", "replaces": None, "text": "notes"}
     body = json.dumps({"changes": [change]}).encode()
     for content_type in ("text/plain", "application/x-www-form-urlencoded"):
@@ -625,7 +656,7 @@ def test_a_file_of_exactly_one_mib_rides_as_a_part_both_ways(api):
 def test_a_part_over_one_mib_is_400_with_its_version_and_nothing_written(api):
     over = binary(MIB + 1)
     project = api.create(a_test())
-    before = project.token()
+    before = project.mark()
     changes = [
         {"path": "tests/T1/notes.md", "replaces": None, "text": "notes"},
         {"path": "documents/over.bin", "replaces": None, **ref(over, api.store())},
@@ -644,7 +675,7 @@ def test_a_part_over_one_mib_is_400_with_its_version_and_nothing_written(api):
 @pytest.mark.rule("6.2.two-parts-one-name-400")
 def test_two_parts_with_one_name_are_400(api):
     project = api.create(a_test())
-    before = project.token()
+    before = project.mark()
     data = binary(500)
     change = {"path": "documents/a.bin", "replaces": None, **ref(data, api.store())}
     body, content_type = raw_form({"changes": [change]}, [(version(data), data)] * 2)
@@ -656,7 +687,7 @@ def test_two_parts_with_one_name_are_400(api):
 @pytest.mark.rule("6.2.digest-mismatch", "4.3.422")
 def test_a_part_whose_bytes_are_not_its_name_is_422_digest_mismatch(api):
     project = api.create(a_test())
-    before = project.token()
+    before = project.mark()
     named, sent = binary(500), binary(500)
     change = {"path": "documents/a.bin", "replaces": None, **ref(named, api.store())}
     body, content_type = raw_form({"changes": [change]}, [(version(named), sent)])
@@ -668,7 +699,7 @@ def test_a_part_whose_bytes_are_not_its_name_is_422_digest_mismatch(api):
 @pytest.mark.rule("6.2.part-size-400")
 def test_a_part_whose_size_is_not_its_files_size_is_400(api):
     project = api.create(a_test())
-    before = project.token()
+    before = project.mark()
     data = binary(500)
     change = {"path": "documents/a.bin", "replaces": None, **ref(data, api.store())}
     change["size"] = 501
@@ -688,7 +719,9 @@ def test_a_part_no_file_names_is_ignored_and_not_kept(api):
     assert error["details"]["missing"] == [version(stray)], "an unreferenced part was kept"
 
 
-@pytest.mark.rule("6.2.answer-no-part-json", "2.12.no-gzip-multipart-answer")
+@pytest.mark.rule(
+    "6.2.answer-no-part-json", "2.12.no-gzip-multipart-answer", "2.12.plain-json-part"
+)
 def test_an_answer_takes_its_form_from_what_it_sends_never_from_accept(api):
     small = binary(800)
     project = api.create({**a_test(), "documents/a.bin": small})
@@ -724,6 +757,9 @@ def test_have_leaves_out_the_parts_the_reader_holds(api):
 
 @pytest.mark.rule("6.2.read-twins")
 def test_each_read_twin_answers_as_its_get(api):
+    """The twins of the core reads (P2b, P7, E3, E5) on any server; those of P3, P5/P6, P8b and
+    L2 when the server offers them (made then only, the case runs on any server)."""
+    offers = functools.partial(server_target.offers, api.base_url)
     pic, log, archive = binary(400), binary(300), binary(500)
     files = {**a_test(), "tests/T1/pic.png": pic}
     project = api.create(files)
@@ -735,39 +771,45 @@ def test_each_read_twin_answers_as_its_get(api):
     run = a_run(1, files=[run_file(api, log)])
     ok(api.post_form(project.path("runs"), run, [log]))
     lib_id = f"kit-{server_target.fresh_suffix()}"
-    ok(publish(api, "config", lib_id, "1.0", archive))
+    if offers("L2", "L3"):
+        with server_target.unrecorded():
+            ok(publish(api, "config", lib_id, "1.0", archive))
     p = project.path()
     pairs = [
-        (("", {}), ("read", {})),
-        (("", {"since": token}), ("read", {"since": token})),
-        (("tests", {"names": "T1"}), ("tests/read", {"names": ["T1"]})),
-        (("tests/T1", {}), ("tests/T1/read", {})),
-        ((f"releases/{T1_ID}/1", {}), (f"releases/{T1_ID}/1/read", {})),
-        ((f"runs/{run['run_id']}", {}), (f"runs/{run['run_id']}/read", {})),
+        ("P2", ("", {}), ("read", {})),
+        ("P3", ("", {"since": token}), ("read", {"since": token})),
+        ("P5", ("tests", {"names": "T1"}), ("tests/read", {"names": ["T1"]})),
+        ("P7", ("tests/T1", {}), ("tests/T1/read", {})),
+        ("P8b", (f"releases/{T1_ID}/1", {}), (f"releases/{T1_ID}/1/read", {})),
+        ("E3", (f"runs/{run['run_id']}", {}), (f"runs/{run['run_id']}/read", {})),
     ]
+    optional = {"P3": ("P3",), "P5": ("P5", "P6"), "P8b": ("P8b",)}
+    pairs = [pair[1:] for pair in pairs if offers(*optional.get(pair[0], ()))]
     for have in ([], [version(pic), version(log)]):
-        for (get_path, query), (twin_path, body) in pairs:
-            asked = {**query, "have": ",".join(have)} if have else query
-            got = api.get(f"{p}/{get_path}".rstrip("/"), asked or None)
-            twin = api.post(f"{p}/{twin_path}", {**body, "have": have})
-            assert (twin.status, twin.json, twin.parts) == (got.status, got.json, got.parts), (
-                twin_path,
-                have,
-            )
+        with server_target.unrecorded():  # every optional read here, made only when offered
+            for (get_path, query), (twin_path, body) in pairs:
+                asked = {**query, "have": ",".join(have)} if have else query
+                got = api.get(f"{p}/{get_path}".rstrip("/"), asked or None)
+                twin = api.post(f"{p}/{twin_path}", {**body, "have": have})
+                assert (twin.status, twin.json, twin.parts) == (got.status, got.json, got.parts), (
+                    twin_path,
+                    have,
+                )
+            if offers("L2", "L3"):
+                item = f"library/config/{lib_id}/1.0"
+                got = api.get(item, {"have": ",".join(have)} if have else None)
+                twin = api.post(f"{item}/read", {"have": have})
+                assert (twin.json, twin.parts) == (got.json, got.parts), ("L2", have)
         board = f"{p}/boards/{SERIAL}"
         got = api.get(board, {**board_query(), "include": "current", "have": ",".join(have)})
         twin = api.post(f"{board}/read", {"include": "current", "have": have}, board_query())
         assert (twin.json, twin.parts) == (got.json, got.parts), ("E5", have)
-        item = f"library/config/{lib_id}/1.0"
-        got = api.get(item, {"have": ",".join(have)} if have else None)
-        twin = api.post(f"{item}/read", {"have": have})
-        assert (twin.json, twin.parts) == (got.json, got.parts), ("L2", have)
 
 
 @pytest.mark.rule("6.2.missing-files-409", "P9.missing-files-409", "4.3.409-invalid")
 def test_a_reference_to_bytes_not_there_is_409_missing_files_and_nothing_written(api):
     project = api.create(a_test())
-    before = project.token()
+    before = project.mark()
     absent = binary(900)
     changes = [
         {"path": "tests/T1/notes.md", "replaces": None, "text": "notes"},
@@ -853,7 +895,7 @@ def test_a_reference_into_a_storage_the_server_does_not_reach_is_assumed_to_hold
 def test_an_unknown_store_id_in_a_reference_is_400(api):
     unknown = max(s["store_id"] for s in ok(api.get("storages"))["storages"]) + 1_000_000
     project = api.create(a_test())
-    before = project.token()
+    before = project.mark()
     data = binary(400)
     changes = [
         {"path": "tests/T1/notes.md", "replaces": None, "text": "notes"},
@@ -902,31 +944,34 @@ def check_mixed(reply: Reply, expected: dict[str, bytes]) -> dict:
     assert names and names[0] == "json", f"the json part is not first: {names}"
     head, data = sections[0]
     assert head.get("Content-Type", "").split(";")[0].strip().lower() == "application/json", head
+    assert "Content-Encoding" not in head, "the json part is plain JSON (§2.12)"
     found = {}
     for (headers, part), name in zip(sections[1:], names[1:]):
         disposition = headers.get("Content-Disposition", "")
         assert disposition.split(";")[0].strip().lower() == "attachment", disposition
         assert name == version(part), f"part {name} holds other bytes"
+        assert "Content-Encoding" not in headers, f"part {name} carries a Content-Encoding"
         filename = _param(disposition, "content-disposition", "filename")
         assert filename, f"part {name} has no filename: {disposition}"
         found[name] = part
     assert names[1:].count(names[0]) == 0 and len(found) == len(sections) - 1, names
     assert found == expected, sorted(found)
-    return json.loads(_undone(data, head))
+    return json.loads(data)
 
 
 @pytest.mark.rule("6.2.answer-multipart")
 def test_an_answer_with_parts_is_multipart_mixed_with_the_json_part_first(api):
+    """P2, E3 and E9."""
     small, picture, report = binary(700), binary(900), binary(500)
     project = api.create({**a_test(), "documents/a.bin": small})
     run = a_run(1, files=[run_file(api, picture, "scope.png")])
     ok(api.post_form(project.path("runs"), run, [picture]))
-    art = an_artifact(api, report, "r.html")
-    ok(api.post_form(project.path("artifacts"), art, [report]))
     whole = check_mixed(api.get(project.path()), {version(small): small})
     assert whole["project_id"] == project.pid
     read = check_mixed(api.get(project.path(f"runs/{run['run_id']}")), {version(picture): picture})
     assert read["run_id"] == run["run_id"]
+    art = an_artifact(api, report, "r.html")
+    ok(api.post_form(project.path("artifacts"), art, [report]))
     query = {"serial": SERIAL, **board_query()}
     got = check_mixed(
         api.get(project.path("artifacts/report/r.html"), query), {version(report): report}
@@ -966,8 +1011,7 @@ def test_a_write_may_reference_without_its_part_a_blob_its_project_holds(api):
     reply = api.post(project.path("runs"), run)
     assert reply.status == 200, f"a run referencing held blobs without parts: {reply.body[:400]!r}"
     assert reply.json["status"] == "saved"
-    art = an_artifact(api, held, "held.html")
-    reply = api.post(project.path("artifacts"), art)
+    reply = api.post(project.path("artifacts"), an_artifact(api, held, "held.html"))
     assert reply.status == 200, f"a report referencing a held blob: {reply.body[:400]!r}"
     read = api.get(project.path(f"runs/{run['run_id']}"))
     assert read.parts == {version(held): held, version(alone): alone}
@@ -1037,6 +1081,7 @@ def test_p11_keeps_the_drafts_as_p9_does(api):
 
 @pytest.mark.rule("P3.releases-changed", "P3.token-moves")
 def test_p3_brings_each_release_made_since_its_token_and_the_token_moves(api):
+    server_target.needs(api.base_url, "P3")  # without it every token is "" (§6.3, P2)
     project = api.create(a_test())
     files = project.read()["files"]
     first = a_release({p: files[p]["version"] for p in a_test()})
@@ -1065,6 +1110,7 @@ def test_p3_brings_each_release_made_since_its_token_and_the_token_moves(api):
 
 @pytest.mark.rule("5.3.draft-moves-no-token")
 def test_a_request_carrying_only_drafts_moves_no_token(api):
+    server_target.needs(api.base_url, "P3")  # a token that moves is seen by P3 alone
     project = api.create(a_test())
     t0 = project.token()
     draft = a_draft()
@@ -1112,7 +1158,7 @@ def test_a_move_already_made_is_a_replay_writing_nothing(api):
     folder = {p.split("/")[-1]: files[p]["version"] for p in a_test()}
     move = {"path": "tests/T1", "replaces_folder": folder, "move_to": "tests/T2"}
     assert ok(project.push([move]))["results"][0]["status"] == "saved"
-    before = project.token()
+    before = project.mark()
     [again] = ok(project.push([move]))["results"]
     assert again["status"] == "saved", again
     project.nothing_since(before)
@@ -1122,6 +1168,7 @@ def test_a_move_already_made_is_a_replay_writing_nothing(api):
 def test_a_request_sent_again_moves_no_token_and_p3_brings_nothing(api):
     """The same P9 again (§6.3 P9): every change already satisfied, it writes nothing, so its
     answer's token is the one held before it, and P3 from that token brings nothing."""
+    server_target.needs(api.base_url, "P3")  # without it every token is "" (§6.3, P2)
     project = api.create(a_test())
     held = project.read()["files"]["tests/T1/procedure.json"]["version"]
     changes = [
@@ -1142,7 +1189,7 @@ def test_a_request_sent_again_moves_no_token_and_p3_brings_nothing(api):
 )
 def test_a_malformed_change_refuses_the_whole_request(api):
     project = api.create(a_test())
-    before = project.token()
+    before = project.mark()
     utf8 = b"plain text, sent as a reference"
     bad = [
         ({"path": "tests/T1/a<b.md", "replaces": None, "text": "x"}, []),
@@ -1229,7 +1276,7 @@ def test_p10_refuses_two_files_taking_one_document_name(api):
     held = project.read()["files"]
     body = a_release({p: held[p]["version"] for p in files})
     refused(project.release(T1_ID, body), 400, "bad_request")
-    assert ok(api.get(project.path(f"releases/{T1_ID}")))["releases"] == []
+    assert project.releases(T1_ID) == []
 
 
 @pytest.mark.rule("P10.body-test-id-ignored", "P10.answer-light")
@@ -1240,8 +1287,105 @@ def test_p10_releases_the_paths_id_whatever_the_body_says_and_answers_light(api)
     made = ok(project.release(T1_ID, body))
     assert (made["test_id"], made["version"], made["test"]) == (T1_ID, 1, "T1"), made
     assert "documents" not in made, "P10 answers the release without its documents"
-    assert [r["version"] for r in ok(api.get(project.path(f"releases/{T1_ID}")))["releases"]] == [1]
-    assert ok(api.get(project.path(f"releases/{OTHER_ID}")))["releases"] == []
+    assert [r["version"] for r in project.releases(T1_ID)] == [1]
+    assert project.releases(OTHER_ID) == []
+
+
+# ---- Tests and releases through the core calls alone (P2, P7, P9, P10) --------------------------
+# The store suites read releases and tests through P8, P8b, P4 and P5, optional calls (§6.1):
+# these cases check the same rules with the core calls, on every server.
+
+
+@pytest.mark.rule(
+    "P2.whole", "P7.one-test", "P10.only-named-files", "P10.changed", "P10.same-as-release",
+    "5.4.document-names", "5.4.release-fields", "5.3.latest-release",
+    "5.3.test-files-with-functions", "5.3.format-from-test-json", "2.5.test-id-from-test-json",
+)  # fmt: skip
+def test_a_release_and_its_test_read_back_through_the_core_calls(api):
+    """P10 keeps exactly the files named, each named in the test (a ``functions/`` path
+    whole); P2 answers the release with its fields and documents, P7 the test (its id from its
+    ``test.json``, its format, ``latest_release``, its files with ``functions/``). A stale
+    version named is ``409 changed``; the same content again ``409 same_as_release``."""
+    files = {
+        "tests/Ripple/test.json": the_test_json(T1_ID),
+        "tests/Ripple/procedure.json": '{"steps": [1]}',
+        "tests/Ripple/notes.md": "not released\n",
+        "functions/rails.py": "VALUE = 1\n",
+    }
+    project = api.create(files)
+    held = project.read()["files"]
+    named = ("tests/Ripple/test.json", "tests/Ripple/procedure.json", "functions/rails.py")
+    body = {**a_release({p: held[p]["version"] for p in named}), "note": "first",
+            "released_by": "kit", "pc": "BENCH-1", "machine_id": MACHINE}  # fmt: skip
+    made = ok(project.release(T1_ID, body))
+    [release] = project.releases(T1_ID)
+    for key in ("format", "fingerprint", "content", "note", "released_by", "pc", "machine_id"):
+        assert release[key] == body[key], (key, release)
+    assert (release["version"], release["test_id"], release["test"]) == (1, T1_ID, "Ripple")
+    assert release["released_at"] == made["released_at"], release
+    documents = release["documents"]
+    assert set(documents) == {"test.json", "procedure.json", "functions/rails.py"}, documents
+    assert documents["procedure.json"]["version"] == held["tests/Ripple/procedure.json"]["version"]
+
+    test = ok(api.get(project.path("tests/Ripple")))
+    assert (test["test"], test["test_id"], test["format"]) == ("Ripple", T1_ID, "text"), test
+    assert test["latest_release"] == 1, test
+    assert set(test["files"]) == {*(p for p in files if p.startswith("tests/")),
+                                  "functions/rails.py"}, sorted(test["files"])  # fmt: skip
+
+    again = refused(project.release(T1_ID, body), 409, "same_as_release")
+    assert again["details"]["version"] == 1, again
+    stale = {**body, "content": a_hex(),
+             "files": {**body["files"], "functions/rails.py": ZERO}}  # fmt: skip
+    error = refused(project.release(T1_ID, stale), 409, "changed")
+    assert error["details"]["changed"] == ["functions/rails.py"], error
+    assert [r["version"] for r in project.releases(T1_ID)] == [1]
+
+
+@pytest.mark.rule(
+    "P10.not-found", "P10.number-and-name", "5.4.numbering-per-id", "5.3.other-id-another-test",
+    "P9.shapes", "P9.last-file-deletes-test",
+)  # fmt: skip
+def test_releases_are_numbered_per_id_named_now_and_kept_through_a_rename_or_a_delete(api):
+    """P10 for an id no test holds is ``404``; releases are numbered from 1 per id and take the
+    test's name at the time (a release keeps the name it was made under, a record); a folder
+    moved by P9 keeps its id and releases; a ``test.json`` written with another id makes
+    another test, numbered from 1; a test whose last file is deleted goes, its releases stay
+    under its id (P2)."""
+    files = {**a_test(T1_ID, "T1"), **a_test(T2_ID, "T2")}
+    project = api.create(files)
+    refused(project.release(OTHER_ID, a_release({"tests/T1/test.json": ZERO})), 404, "not_found")
+
+    def release(test_id: str, folder: str) -> dict:
+        held = project.read()["files"]
+        named = {p: f["version"] for p, f in held.items() if p.startswith(f"tests/{folder}/")}
+        return ok(project.release(test_id, a_release(named)))
+
+    assert [release(T1_ID, "T1")["version"], release(T2_ID, "T2")["version"]] == [1, 1]
+    held = project.read()["files"]
+    folder = {
+        p.split("/", 2)[2]: f["version"] for p, f in held.items() if p.startswith("tests/T1/")
+    }
+    move = {"path": "tests/T1", "replaces_folder": folder, "move_to": "tests/T1 renamed"}
+    assert [r["status"] for r in ok(project.push([move]))["results"]] == ["saved"]
+    moved = release(T1_ID, "T1 renamed")
+    assert (moved["version"], moved["test"]) == (2, "T1 renamed"), moved
+    assert [r["test"] for r in project.releases(T1_ID)] == ["T1", "T1 renamed"]
+
+    held = project.read()["files"]
+    marker = held["tests/T2/test.json"]
+    other = {"path": "tests/T2/test.json", "replaces": marker["version"],
+             **text(the_test_json(T3_ID))}  # fmt: skip
+    assert [r["status"] for r in ok(project.push([other]))["results"]] == ["saved"]
+    assert ok(api.get(project.path("tests/T2")))["test_id"] == T3_ID
+    assert release(T3_ID, "T2")["version"] == 1, "another id starts at 1"
+    held = project.read()["files"]
+    gone = [{"path": p, "replaces": f["version"], "delete": True}
+            for p, f in held.items() if p.startswith("tests/T2/")]  # fmt: skip
+    assert {r["status"] for r in ok(project.push(gone))["results"]} == {"saved"}
+    refused(api.get(project.path("tests/T2")), 404, "not_found")
+    assert [r["version"] for r in project.releases(T2_ID)] == [1]
+    assert [r["version"] for r in project.releases(T3_ID)] == [1]
 
 
 @pytest.mark.rule("2.5.malformed-test-id-400-first")
@@ -1302,8 +1446,10 @@ def test_a_bundles_archive_is_kept_as_sent_never_repacked(api):
     [result] = ok(project.push([change], [second]))["results"]
     assert (result["status"], result.get("version")) == ("saved", version(second)), result
     kept(second)
-    since = project.since(token)
-    assert since["bundle"]["archive"]["version"] == version(second), since.get("bundle")
+    if server_target.offers(api.base_url, "P3"):  # P3 too, when the server offers it
+        with server_target.unrecorded():
+            since = project.since(token)
+        assert since["bundle"]["archive"]["version"] == version(second), since.get("bundle")
 
 
 @pytest.mark.rule("P4.tests")
@@ -1341,8 +1487,10 @@ def test_a_test_json_naming_neither_text_nor_code_is_code(api):
         "tests/T3/procedure.json": '{"steps": []}',
     }
     project = api.create(files)
-    listed = {t["test"]: t["format"] for t in ok(api.get(project.path("tests")))["tests"]}
-    assert listed == {"T1": "code", "T2": "code", "T3": "text"}, listed
+    if server_target.offers(api.base_url, "P4"):  # P4's list too, when the server offers it
+        with server_target.unrecorded():
+            listed = {t["test"]: t["format"] for t in ok(api.get(project.path("tests")))["tests"]}
+        assert listed == {"T1": "code", "T2": "code", "T3": "text"}, listed
     for name, expected in (("T1", "code"), ("T2", "code"), ("T3", "text")):
         assert ok(api.get(project.path(f"tests/{name}")))["format"] == expected, name
 
@@ -1407,9 +1555,9 @@ def test_a_number_carried_before_releases_is_kept_and_the_next_release_follows_i
     }
     made = ok(project.release(T1_ID, sent, role="importer"))
     assert (made["version"], made.get("numbered_before_releases")) == (4, True), made
-    [listed] = ok(api.get(project.path(f"releases/{T1_ID}")))["releases"]
+    [listed] = project.releases(T1_ID)
     assert listed.get("numbered_before_releases") is True, listed
-    one = ok(api.get(project.path(f"releases/{T1_ID}/4")))
+    [one] = project.releases(T1_ID)  # with its documents
     assert one.get("numbered_before_releases") is True, one
     assert project.read()["releases"][T1_ID][0].get("numbered_before_releases") is True
     held = project.read()["files"]
@@ -1563,7 +1711,10 @@ def test_only_a_publisher_publishes_an_item_holding_code(api):
 
 @pytest.mark.rule("S1.storages", "5.15.storage-fields", "7.1.params-no-secret")
 def test_s1_names_this_server_and_its_storages_without_a_secret(api):
-    a_declared_storage(api)
+    """Its storages, a declared one among them when the server offers S2."""
+    if server_target.offers(api.base_url, "S2"):
+        with server_target.unrecorded():
+            a_declared_storage(api)
     answer = ok(api.get("storages"))
     assert isinstance(answer["instance_id"], str) and answer["instance_id"], answer
     storages = answer["storages"]
@@ -1750,9 +1901,16 @@ def test_b1_and_b2_refuse_what_is_not_one_file_in_the_api_storage(api):
     reply = api.request("POST", f"{blob}/{hex_of(wrong)}", body=data, content_type=octet)
     refused(reply, 422, "digest_mismatch")
     refused(api.get(f"{blob}/{hex_of(wrong)}"), 404, "not_found")
-    far = a_declared_storage(api)["store_id"]
-    unknown = far + 1_000_000
-    for store_id, status, code in ((far, 400, "bad_request"), (unknown, 404, "not_found")):
+    listed = ok(api.get("storages"))["storages"]
+    stores = [s["store_id"] for s in listed]
+    checked = [(max(stores) + 1_000_000, 404, "not_found")]
+    others = [s["store_id"] for s in listed if s["backend"] != "api"]
+    if others:  # another backend S1 lists (the server's own share, say)
+        checked.append((others[0], 400, "bad_request"))
+    elif server_target.offers(api.base_url, "S2"):  # another backend: a declared storage
+        with server_target.unrecorded():
+            checked.append((a_declared_storage(api)["store_id"], 400, "bad_request"))
+    for store_id, status, code in checked:
         path = f"storages/{store_id}/blobs/{owner}/{hex_of(data)}"
         refused(api.request("POST", path, body=data, content_type=octet), status, code)
         refused(api.get(path), status, code)
@@ -1849,8 +2007,11 @@ def test_b2_answers_a_file_of_at_most_one_mib_too(api):
     project = api.create({**a_test(), "documents/small.bin": small})
     reply = api.get(f"storages/{api.store()}/blobs/{project.pid}/{hex_of(small)}")
     assert (reply.status, reply.body) == (200, small)
+    if not server_target.offers(api.base_url, "L3"):  # a library archive, with the library
+        return
     archive, item_id = binary(300), f"kit-{server_target.fresh_suffix()}"
-    ok(publish(api, "config", item_id, "1.0", archive))
+    with server_target.unrecorded():
+        ok(publish(api, "config", item_id, "1.0", archive))
     reply = api.get(f"storages/{api.store()}/blobs/library/{hex_of(archive)}")
     assert (reply.status, reply.body) == (200, archive)
 
@@ -1879,7 +2040,7 @@ def writable_root(storage: dict, instance_id: str) -> Path | None:
 def check_own_storage_references(api: Api, storage: dict, instance_id: str) -> None:
     sid = storage["store_id"]
     project = api.create(a_test())
-    before = project.token()
+    before = project.mark()
     absent = binary(300)
     change = {"path": "documents/own.bin", "replaces": None, **ref(absent, sid)}
     error = refused(project.push([change]), 409, "missing_files")
@@ -1990,16 +2151,40 @@ def two_runs(api: Api, pid: str) -> tuple[dict, dict]:
 
 @pytest.mark.rule("import.role-and-flag", "import.E1-no-pointer", "import.bench-seen-not-imported")
 def test_an_imported_run_keeps_its_pushed_at_and_moves_no_pointer(api):
+    """§6.7: the run keeps the ``pushed_at`` sent; on a server offering E6 it moves no pointer
+    (one not offering E6 picks the current run itself: ``test_server_contract_calls``)."""
     pid, machine = server_target.fresh_id(), secrets.token_hex(4)
     started = api.server_now()
     run = {**a_run(3, machine_id=machine), "import": True, "pushed_at": "2020-01-02T03:04:05Z"}
     answer = ok(api.post(f"projects/{pid}/runs", run, role="importer"))
-    assert (answer["status"], answer["current"]) == ("saved", False), answer
+    assert answer["status"] == "saved", answer
     read = ok(api.get(f"projects/{pid}/runs/{run['run_id']}"))
-    assert read["pushed_at"] == "2020-01-02T03:04:05Z" and read["current"] is False
-    assert pointer_of(api, pid) is None, "an imported run moved the pointer"
-    [bench] = [b for b in ok(api.get("benches"))["benches"] if b["machine_id"] == machine]
-    assert bench["first_seen"] >= started, ("first_seen is the server's own", bench)
+    assert read["pushed_at"] == "2020-01-02T03:04:05Z", read
+    if server_target.offers(api.base_url, "E6"):  # the importer sets the pointers itself
+        assert answer["current"] is False and read["current"] is False, (answer, read)
+        assert pointer_of(api, pid) is None, "an imported run moved the pointer"
+    if server_target.offers(api.base_url, "E14"):  # a bench's times, with the benches
+        with server_target.unrecorded():
+            benches = ok(api.get("benches"))["benches"]
+        [bench] = [b for b in benches if b["machine_id"] == machine]
+        assert bench["first_seen"] >= started, ("first_seen is the server's own", bench)
+
+
+@pytest.mark.rule("5.13.incomplete-never-current")
+def test_an_imported_incomplete_run_never_becomes_current(api):
+    """A stopped run is never current (5.13), imported too, with E6 or without (§6.7): an
+    imported incomplete run, alone of its test on its board, is not current, and E5 names no
+    current run for its test, with ``include=current`` too."""
+    pid = server_target.fresh_id()
+    run = {**a_run(3), "complete": False, "import": True, "pushed_at": "2020-01-02T03:04:05Z"}
+    del run["ended"], run["verdict"]
+    answer = ok(api.post(f"projects/{pid}/runs", run, role="importer"))
+    assert (answer["status"], answer["current"]) == ("saved", False), answer
+    assert ok(api.get(f"projects/{pid}/runs/{run['run_id']}"))["current"] is False
+    assert pointer_of(api, pid) is None, "an imported incomplete run became current"
+    full = ok(api.get(f"projects/{pid}/boards/{SERIAL}", {**board_query(), "include": "current"}))
+    current = [r["run_id"] for r in full.get("current_runs", [])]
+    assert run["run_id"] not in current, ("an imported incomplete run is a current run", full)
 
 
 @pytest.mark.rule("3.5.importer-beside-bench")
@@ -2009,9 +2194,14 @@ def test_a_login_holding_importer_beside_bench_imports_and_pushes_as_a_bench(api
     pid = server_target.fresh_id()
     run = {**a_run(3), "import": True, "pushed_at": "2020-01-02T03:04:05Z"}
     answer = ok(api.post(f"projects/{pid}/runs", run, role="mover"))
-    assert (answer["status"], answer["current"]) == ("saved", False), answer
+    assert answer["status"] == "saved", answer
+    if server_target.offers(api.base_url, "E6"):  # without E6 the server picks: no claim here
+        assert answer["current"] is False, answer
     read = ok(api.get(f"projects/{pid}/runs/{run['run_id']}"))
     assert read["pushed_at"] == "2020-01-02T03:04:05Z", ("its import was ignored", read)
+    # Its board is listed, so registered on a server registering its boards (§3.3).
+    boards = ok(api.get(f"projects/{pid}/boards"))["boards"]
+    assert [b["serial"] for b in boards] == [SERIAL], ("an import's board not listed", boards)
     started = api.server_now()
     pushed = ok(api.post(f"projects/{pid}/runs", a_run(4), role="mover"))
     assert pushed["status"] == "saved" and pushed["current"] is True, pushed
@@ -2023,6 +2213,9 @@ def test_the_import_fields_are_ignored_without_the_importer_role(api):
     pid = server_target.fresh_id()
     started = api.server_now()
     run = {**a_run(3), "import": True, "pushed_at": "2020-01-02T03:04:05Z"}
+    # a bench's run, which a server registering its boards takes on a board it lists only
+    board = (run.get("part_number"), run.get("board_revision"), run["serial"])
+    server_target.register_board(api.base_url, pid, board)
     ok(api.post(f"projects/{pid}/runs", run))
     pushed = ok(api.get(f"projects/{pid}/runs/{run['run_id']}"))["pushed_at"]
     assert pushed >= started, ("a bench's import: true keeps the server's pushed_at", pushed)
@@ -2087,6 +2280,7 @@ def an_entry(**more: Any) -> dict:
     }
 
 
+@pytest.mark.offer_aware  # E7 on any server; E15 when the server offers it
 @pytest.mark.rule("import.E7-E15-received-at")
 def test_imported_entries_keep_their_received_at_or_none(api):
     pid = server_target.fresh_id()
@@ -2101,6 +2295,8 @@ def test_imported_entries_keep_their_received_at_or_none(api):
     assert by_id[stamped["entry_id"]]["received_at"] == "2020-01-01T00:00:00Z"
     assert "received_at" not in by_id[bare["entry_id"]], by_id[bare["entry_id"]]
     assert by_id[bare["entry_id"]]["current"] is True, "current is computed, never imported"
+    if not server_target.offers(api.base_url, "E15"):
+        return
     lot = an_entry(kind="lot", value="L1", received_at="2020-02-02T00:00:00Z")
     named = an_entry(kind="field", name="Customer", value="ACME")
     path = f"projects/{pid}/boards/{SERIAL}/entries"
@@ -2156,10 +2352,11 @@ def test_an_imported_delete_keeps_its_fields_and_hands_nothing_on(api):
     body["deleted_was_current"] = False
     path = f"projects/{pid}/runs/{newer['run_id']}"
     answer = ok(api.post(f"{path}/delete", body, role="importer"))
-    assert "pointer" not in answer, ("an imported delete hands nothing on", answer)
     read = ok(api.get(path))
     assert {k: read.get(k) for k in deleted} == deleted and read["deleted_was_current"] is False
-    assert pointer_of(api, pid)["run_id"] == newer["run_id"], "the pointer was handed on"
+    if server_target.offers(api.base_url, "E6"):  # without E6 it hands on: calls' case
+        assert "pointer" not in answer, ("an imported delete hands nothing on", answer)
+        assert pointer_of(api, pid)["run_id"] == newer["run_id"], "the pointer was handed on"
     data = binary(200)
     ok(api.post_form(f"projects/{pid}/artifacts", a_report(api, data), [data]))
     name = {"kind": "report", "serial": SERIAL, **board_query(), "name": "full.html"}
@@ -2206,9 +2403,9 @@ def test_an_imported_release_is_filed_under_its_id_as_sent(api):
         "Old name",
         sent["released_at"],
     )
-    [listed] = ok(api.get(project.path(f"releases/{OTHER_ID}")))["releases"]
+    [listed] = project.releases(OTHER_ID)
     assert (listed["version"], listed["test"]) == (3, "Old name")
-    full = ok(api.get(project.path(f"releases/{OTHER_ID}/3")))
+    [full] = project.releases(OTHER_ID)  # with its documents
     assert full["documents"]["procedure.json"]["text"] == document["text"]
     assert ok(project.release(OTHER_ID, sent, role="importer"))["version"] == 3, "answered again"
     refused(

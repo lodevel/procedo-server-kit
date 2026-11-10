@@ -51,6 +51,7 @@ from .project_store import (
     RELEASES_DIR,
     SAVED,
     TESTS_DIR,
+    UNSUPPORTED,
     Bundle,
     BundleWrite,
     Change,
@@ -232,8 +233,9 @@ def read(source: ProjectSource, origin: Origin, ctx: OpContext) -> Read:
         try:
             found = source.changes_since(origin.project_id, origin.since, ctx)
         except EvidenceError as exc:
-            if exc.code != GONE:
+            if exc.code not in (GONE, UNSUPPORTED):
                 raise
+            # 410: the server cannot answer from the token; 501: it no longer offers P3 (§6.1)
             log.info("project sync: the server cannot answer from the token; reading it whole")
         else:
             moved = {name_key(path) for path in (*found.deleted, *found.files)}

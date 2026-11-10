@@ -232,6 +232,11 @@ class Evidence:
     store: int  # the ``api`` storage's store_id
     blobs: dict[str, bytes] = field(default_factory=dict)  # every file's bytes, by sha256
 
+    def offers(self, *calls: str) -> bool:
+        """Whether the server offers every one of *calls* (optional calls, §6.1): a case marked
+        ``offer_aware`` makes them only then."""
+        return server_target.offers(self.wire.base_url, *calls)
+
     def other(self) -> Evidence:
         """Another project on the same server."""
         return Evidence(self.wire, server_target.fresh_id(), self.store, self.blobs)
@@ -444,9 +449,12 @@ class Evidence:
         board_revision: str | None = "B",
         **query: str,
     ) -> dict:
-        """E5."""
+        """E5, less the run the kit imports to register the board on a server registering its
+        boards (``server_target.BoardSeeds``)."""
         query = {"part_number": none(part_number), "board_revision": none(board_revision), **query}
-        return ok(self.wire.send("GET", self.path("boards", serial), query=query))
+        return server_target.kit_tests(
+            ok(self.wire.send("GET", self.path("boards", serial), query=query))
+        )
 
     def pointer(
         self,
@@ -466,10 +474,11 @@ class Evidence:
         return ok(self.wire.send("GET", self.path("boards"), query=query))["boards"]
 
     def search(self, *, across: bool = False, **query: str) -> dict:
-        """E2, in this project unless *across*."""
+        """E2, in this project unless *across*, less the runs the kit imports to register its
+        boards on a server registering them (``server_target.kit_runs``)."""
         if not across:
             query = {"project_id": self.project, **query}
-        return ok(self.wire.send("GET", "runs", query=query))
+        return server_target.kit_runs(ok(self.wire.send("GET", "runs", query=query)))
 
     def found(self, **query: str) -> list[str]:
         """E2's rows (one page), as run ids."""
@@ -712,16 +721,19 @@ def same_files(read: list[dict], sent: list[dict]) -> None:
 
 @rule(
     "5.5.run-full",
+    "5.5.annotation-absent",
     "5.5.run-project-id",
     "5.5.run-current",
     "5.5.run-summary-light",
     "5.8.runfile-role-mimetype",
 )
+@pytest.mark.offer_aware
 def test_a_run_reads_back_every_field_exactly_as_pushed(ev):
     """E1 then E3: every field of the Run, its phases and measurements (attempts, a repeated
     phase name, a criterion's own keys in their order, a value in both forms), its files with
-    their roles and types, an unknown field; plus exactly the server's own fields. E2 and E5
-    answer the same run as RunSummary: the same fields less the five §5.5 leaves out."""
+    their roles and types, an unknown field; plus exactly the server's own fields. E5 (and E2
+    when the server offers it) answer the same run as RunSummary: the same fields less the five
+    §5.5 leaves out."""
     run = rich_run(ev)
     answer = ev.pushed(run)
     assert answer["run_id"] == run["run_id"] and answer["test_id"] == TEST_A
@@ -752,15 +764,48 @@ def test_a_run_reads_back_every_field_exactly_as_pushed(ev):
     assert whole == read
     assert parts == {f"sha256:{item['sha256']}": ev.blobs[item["sha256"]] for item in run["files"]}
 
-    rows = ev.search()["runs"]
-    assert rows == [summary(read)]
     board = ev.board("SN0042", "AX-2210", "B")
     assert board["tests"][0]["runs"] == [summary(read)]
+    if ev.offers("E2"):
+        assert ev.search()["runs"] == [summary(read)]
 
 
 def ok_reply(reply: Reply) -> Reply:
     assert reply.status == 200, (reply.status, reply.body[:800])
     return reply
+
+
+@rule(
+    "2.4.record-kept-as-sent", "2.5.filed-under-id", "5.13.newer-complete-current",
+    "5.13.one-mark-per-test-id",
+)  # fmt: skip
+def test_runs_are_filed_by_test_id_and_the_newest_complete_one_is_current(ev):
+    """Core calls alone (E1, E3, E5): a run keeps the test name it recorded, as sent; two test
+    ids recording one name are two tests, each with its runs and its mark; a complete run
+    ending later takes its id's mark, one ending earlier or incomplete does not, and no other
+    id's mark moves."""
+    a1 = ev.run(test_id=TEST_A, test="Ripple Ä", start=0, ended=10)
+    b1 = ev.run(test_id=TEST_B, test="Ripple Ä", start=1, ended=11)
+    for run in (a1, b1):
+        ev.pushed(run)
+    assert ev.read_run(a1["run_id"], have=ev.held_versions())["test"] == "Ripple Ä"
+    shouted = ev.run(test_id=TEST_A, test="RIPPLE ä", start=2, ended=12)
+    ev.pushed(shouted)
+    assert ev.read_run(shouted["run_id"], have=ev.held_versions())["test"] == "RIPPLE ä"
+
+    def marks() -> dict[str, str | None]:
+        return {t["test_id"]: t["pointer"]["run_id"] for t in ev.board("SN-1")["tests"]}
+
+    assert marks() == {TEST_A: shouted["run_id"], TEST_B: b1["run_id"]}
+    tests = {t["test_id"]: [r["run_id"] for r in t["runs"]] for t in ev.board("SN-1")["tests"]}
+    assert sorted(tests[TEST_A]) == sorted([a1["run_id"], shouted["run_id"]]), tests
+    assert tests[TEST_B] == [b1["run_id"]], tests
+    ev.pushed(ev.run(test_id=TEST_A, start=3, ended=5))  # ended earlier: no mark
+    ev.pushed(ev.run(test_id=TEST_A, start=30, complete=False))  # incomplete: no mark
+    assert marks() == {TEST_A: shouted["run_id"], TEST_B: b1["run_id"]}
+    later = ev.run(test_id=TEST_A, start=40, ended=50)
+    ev.pushed(later)
+    assert marks() == {TEST_A: later["run_id"], TEST_B: b1["run_id"]}
 
 
 @rule("E1.answer")
@@ -798,13 +843,19 @@ def test_a_format_2_run_sending_a_lot_is_refused(ev):
     run = ev.run(lot="L2611-04")
     refused(ev.push(run), 400, "bad_request")
     assert ev.wire.send("GET", ev.path("runs", run["run_id"])).status == 404
-    assert ev.boards() == []
+    assert ev.board(run["serial"])["tests"] == []  # less the kit's own run, if any
+    # On a server registering its boards a refusal for the board alone may come first, and the
+    # kit registers it (server_target.BoardSeeds): E4 lists it there.
+    if not server_target.seeds_boards():
+        assert ev.boards() == []
 
 
+@pytest.mark.offer_aware
 @rule("5.5.format-1-board", "E1.answer", "E2.filters")
 def test_a_format_1_run_belongs_to_the_no_part_number_board(ev):
     """What it recorded stays a record; every call naming a board names the "no part
-    number" one, and E2's part number and revision filters find it only with both empty."""
+    number" one, and E2's part number and revision filters (when the server offers E2) find it
+    only with both empty."""
     run = ev.run(
         format_version=1, serial="Old-1", part_number="AX-9", board_revision="C", lot="L-OLD"
     )
@@ -820,6 +871,8 @@ def test_a_format_1_run_belongs_to_the_no_part_number_board(ev):
     ]
     assert [t["test_id"] for t in ev.board("Old-1", None, None)["tests"]] == [TEST_A]
     assert ev.board("Old-1", "AX-9", "C")["tests"] == []
+    if not ev.offers("E2"):
+        return
     assert ev.found(part_number="", board_revision="") == [run["run_id"]]
     assert ev.found(part_number="") == [run["run_id"]]
     assert ev.found(part_number="AX-9") == []
@@ -1064,6 +1117,22 @@ def test_a_boards_lot_and_details_are_its_current_entries(ev):
     assert "lot" not in ev.board("L-1")["board"]
 
 
+@rule("5.11.board-times")
+def test_a_boards_times_are_its_creation_and_its_last_run(ev):
+    """A board's ``created_at`` is when its first run made it, kept; ``last_ended`` its newest
+    run's ``ended``."""
+    first = ev.run(serial="T-0", start=20, ended=30)
+    ev.pushed(first)
+    [board] = ev.boards()
+    created = board["created_at"]
+    assert TIME.fullmatch(created) and board["last_ended"] == iso(30), board
+    ev.pushed(ev.run(serial="T-0", start=0, ended=10))
+    [board] = ev.boards()
+    assert (board["created_at"], board["last_ended"]) == (created, iso(30)), board
+    ev.pushed(ev.run(serial="T-0", start=40, ended=50))
+    assert ev.boards()[0]["last_ended"] == iso(50)
+
+
 @rule("5.11.board-times", "5.11.board-never-removed")
 def test_a_boards_times_and_a_board_whose_runs_are_all_gone_is_still_listed(ev):
     ev.entries("T-1", "AX", "B", [board_entry("lot", "L1", None)])
@@ -1103,7 +1172,14 @@ def test_a_report_or_a_draft_creates_its_board_and_an_export_none(ev):
         assert TIME.fullmatch(board["created_at"]), board
 
 
-@rule("E4.filters", "E4.order")
+@rule("E4.every-board")
+def test_e4_lists_the_board_of_a_report_made_before_any_run(ev):
+    """A report (E10) on a board no run was pushed to: E4 lists that board."""
+    ev.artifact_pushed(ev.artifact("report", "early.html", "R-1", "AX", "B"))
+    assert [(b["serial"], b.get("part_number")) for b in ev.boards()] == [("R-1", "AX")]
+
+
+@rule("E4.filters", "E4.order", "E4.list")
 def test_e4_filters_and_orders_the_boards_by_case_folding(ev):
     """Part number, revision, serial, each by case folding, "none" first: byte order would
     put ``AZ`` before ``ay`` and ``S1x`` before ``s0``."""
@@ -1116,13 +1192,14 @@ def test_e4_filters_and_orders_the_boards_by_case_folding(ev):
         ("S3", "AX", None),
         ("zeta", None, None),
     ]
-    for serial, part, revision in boards:
-        ev.entries(serial, part, revision, [board_entry("lot", "L", None)])
+    for start, (serial, part, revision) in enumerate(boards):
+        ev.pushed(ev.run(serial=serial, part_number=part, board_revision=revision, start=start))
 
     def listed(**query: str) -> list[str]:
         return [b["serial"] for b in ev.boards(**query)]
 
     assert listed() == ["zeta", "S3", "S2", "s0", "S1x", "S1", "S9"]
+    assert not [b for b in ev.boards() if "entries" in b], "E4 lists a board with its entries"
     assert listed(part_number="ax") == ["S3", "S2", "s0", "S1x"]
     assert listed(part_number="") == ["zeta"]
     assert listed(board_revision="") == ["zeta", "S3"]
@@ -1131,20 +1208,23 @@ def test_e4_filters_and_orders_the_boards_by_case_folding(ev):
     assert listed(part_number="nothing") == []
 
 
+@pytest.mark.offer_aware
 @rule("E5.addressing-400")
 def test_a_call_naming_a_board_needs_its_three_parts(ev):
-    """E5, its read twin, E6, E9 and E15 each refuse a call missing one of ``serial``,
-    ``part_number`` and ``board_revision`` (§6.4 Addressing), and write nothing."""
+    """E5 and its read twin, E9; E6 and E15 when the server offers them: each refuses a call
+    missing one of ``serial``, ``part_number`` and ``board_revision`` (§6.4 Addressing), and
+    writes nothing."""
     run = ev.run(serial="A-1", part_number=None, board_revision=None)
     ev.pushed(run)
-    report = ev.artifact("report", "a.html", "A-1")
-    ev.artifact_pushed(report)
+    ev.artifact_pushed(ev.artifact("report", "a.html", "A-1"))
     before = ev.pointer("A-1", TEST_A, None, None)
     board = ev.path("boards", "A-1")
     for query in ({"part_number": ""}, {"board_revision": ""}, {}):
         refused(ev.wire.send("GET", board, query=query), 400, "bad_request")
         read = ev.wire.send("POST", board + "/read", query=query, body={"have": []})
         refused(read, 400, "bad_request")
+        if not ev.offers("E6", "E15"):
+            continue
         current = ev.wire.send(
             "POST",
             ev.path("boards", "A-1", "tests", TEST_A, "current"),
@@ -1159,7 +1239,10 @@ def test_a_call_naming_a_board_needs_its_three_parts(ev):
             body={"entries": [board_entry("lot", "L", None)]},
         )
         refused(entries, 400, "bad_request")
-    for query in ({"part_number": "", "board_revision": ""}, {"serial": "A-1", "part_number": ""}):
+    for query in (
+        {"part_number": "", "board_revision": ""},
+        {"serial": "A-1", "part_number": ""},
+    ):
         artifact = ev.wire.send("GET", ev.path("artifacts", "report", "a.html"), query=query)
         refused(artifact, 400, "bad_request")
     assert ev.pointer("A-1", TEST_A, None, None) == before
@@ -1170,19 +1253,21 @@ def test_a_call_naming_a_board_needs_its_three_parts(ev):
 # ---- §5.12 BoardResults, E5 ---------------------------------------------------------------------
 
 
-@rule("5.12.tests-by-test-id", "5.12.include-current", "5.12.all-deleted-not-listed")
+@rule("5.12.tests-by-test-id", "5.12.include-current", "5.12.all-deleted-not-listed", "E5.board")
 def test_e5_lists_tests_by_test_id_and_adds_their_current_runs(ev):
     runs = {
         TEST_C: [ev.run(test_id=TEST_C, test="C", start=0, ended=5)],
         TEST_A: [ev.run(test_id=TEST_A, start=1, ended=6), ev.run(start=2, ended=3)],
         TEST_B: [ev.run(test_id=TEST_B, test="B", start=3, ended=4)],
     }
-    gone = ev.run(test_id=TEST_D, test="D", start=4, ended=5)
     for test_runs in runs.values():
         for run in test_runs:
             ev.pushed(run)
-    ev.pushed(gone)
-    ok(ev.delete_run(gone["run_id"]))
+    if ev.offers("E11"):  # a test whose runs are all deleted is not listed
+        with server_target.unrecorded():
+            gone = ev.run(test_id=TEST_D, test="D", start=4, ended=5)
+            ev.pushed(gone)
+            ok(ev.delete_run(gone["run_id"]))
 
     results = ev.board("SN-1", have=",".join(ev.held_versions()))
     assert results["format_version"] == 2
@@ -1209,7 +1294,7 @@ def test_e5_lists_tests_by_test_id_and_adds_their_current_runs(ev):
         query=query,
         body={"include": "current", "have": have},
     )
-    assert ok(twin) == full
+    assert server_target.kit_tests(ok(twin)) == full
 
     whole, parts = parse(
         ok_reply(
@@ -1220,7 +1305,9 @@ def test_e5_lists_tests_by_test_id_and_adds_their_current_runs(ev):
         f"sha256:{item['sha256']}" for read in full["current_runs"] for item in read["files"]
     }
     assert set(parts) == records
-    assert whole == full
+    assert server_target.kit_tests(whole) == full
+    unknown = ev.board("SN-none-of-these")  # a board the server does not know: no run, no entry
+    assert unknown["tests"] == [] and unknown["board"]["serial"] == "SN-none-of-these", unknown
 
 
 # ---- §5.13 The pointer rule, E6 -----------------------------------------------------------------
@@ -1284,15 +1371,19 @@ def test_a_run_set_by_hand_gives_the_pointer_its_ended(ev):
     assert ev.pointer("SN-1", TEST_A)["run_id"] == middle["run_id"]
 
 
-@rule("5.13.handoff-tiebreak", "5.13.handoff-none", "E11.answer-pointer")
+@rule(
+    "5.13.handoff-tiebreak", "5.13.handoff-none", "5.13.handoff-complete-only", "E11.answer-pointer"
+)
 def test_deleting_the_current_run_hands_the_pointer_on_by_ended_then_run_id(ev):
     """Y and Z end together, Y with the greater run id; X has the greatest run id but ended
-    first; Z was pushed first. Each delete hands on to the one §5.13 names."""
+    first; Z was pushed first; S, the newest, stopped before its end. Each delete hands on to
+    the one §5.13 names, never S: the last delete leaves no pointer."""
     z = ev.run(start=10, ended=50)
     y = ev.run(start=20, ended=50)
     x = ev.run(start=30, ended=40)
     w = ev.run(start=0, ended=60)
-    for run in (z, y, x, w):
+    stopped = ev.run(start=70, complete=False)
+    for run in (z, y, x, w, stopped):
         ev.pushed(run)
     assert ev.pointer("SN-1", TEST_A)["run_id"] == w["run_id"]
     for gone, heir in ((w, y), (y, z), (z, x)):
@@ -1304,8 +1395,8 @@ def test_deleting_the_current_run_hands_the_pointer_on_by_ended_then_run_id(ev):
         assert answer["pointer"]["test_id"] == TEST_A
         assert ev.pointer("SN-1", TEST_A)["run_id"] == heir["run_id"]
     answer = ok(ev.delete_run(x["run_id"]))
-    assert "pointer" in answer and answer["pointer"] is None, answer
-    assert ev.board("SN-1")["tests"] == []
+    assert "pointer" in answer and answer["pointer"] is None, ("never the stopped run", answer)
+    assert ev.pointer("SN-1", TEST_A) is None  # S alone is left: no pointer
     oldest = ev.run(start=1, ended=2)
     assert ev.pushed(oldest)["current"] is True
     assert ev.pointer("SN-1", TEST_A)["run_id"] == oldest["run_id"]
@@ -1624,10 +1715,11 @@ def test_a_drafts_generation_is_not_found(ev):
     assert ok(ev.get_artifact("draft", "d.html", "SN-1", "AX", "B"))["name"] == "d.html"
 
 
+@pytest.mark.offer_aware
 @rule("E8.order-ties", "E8.filters", "E8.light")
 def test_e8_orders_filters_and_pages_the_artifacts(ev):
     """Artifacts with no ``generated``: E8's ties alone order them, by kind, the board and
-    the name, then the generation newest first."""
+    the name, then the generation newest first. ``deleted`` when the server offers E12."""
     zeta = ev.artifact("export", "Zeta.docx", "")
     alpha = ev.artifact("export", "alpha.md", "")
     r1 = ev.artifact(
@@ -1642,7 +1734,9 @@ def test_e8_orders_filters_and_pages_the_artifacts(ev):
     draft = ev.artifact("draft", "d.html", "S1", "AX", "B", work_order="wo-7")
     for art in (zeta, r1, later, gone, alpha, r0, draft, r1b):
         ev.artifact_pushed(art)
-    ok(ev.delete_artifact(gone))
+    deletes = ev.offers("E12")
+    if deletes:
+        ok(ev.delete_artifact(gone))
 
     def listed(**query: str) -> list[tuple]:
         rows = ev.list_artifacts(**query)["artifacts"]
@@ -1653,10 +1747,13 @@ def test_e8_orders_filters_and_pages_the_artifacts(ev):
     d, a, z = ("draft", "d.html", None), ("export", "alpha.md", 1), ("export", "Zeta.docx", 1)
     rr0, rr1, ra = ("report", "R0.html", 1), ("report", "r1.html", 2), ("report", "a.html", 1)
     ra2 = ("report", "a2.html", 1)
-    assert listed() == [d, a, z, rr0, rr1, ra2]
-    assert listed(generations="all") == [d, a, z, rr0, rr1, ("report", "r1.html", 1), ra2]
-    assert listed(deleted="include") == [d, a, z, ra, rr0, rr1, ra2]
-    assert listed(deleted="only") == [ra]
+    live = [] if deletes else [ra]  # a.html deleted when the server offers E12
+    assert listed() == [d, a, z, *live, rr0, rr1, ra2]
+    rr1_1 = ("report", "r1.html", 1)
+    assert listed(generations="all") == [d, a, z, *live, rr0, rr1, rr1_1, ra2]
+    if deletes:
+        assert listed(deleted="include") == [d, a, z, ra, rr0, rr1, ra2]
+        assert listed(deleted="only") == [ra]
     assert listed(work_order="wo-7") == [d, rr1]
     assert listed(test="RIPPLE") == [rr1]
     assert listed(test="load") == []
@@ -1664,9 +1761,9 @@ def test_e8_orders_filters_and_pages_the_artifacts(ev):
     assert listed(kind="report", serial="s1") == [rr0, rr1]
     assert listed(serial="") == [a, z]
     assert listed(serial="S1", part_number="", board_revision="") == [rr0]
-    assert listed(part_number="ax") == [d, rr1, ra2]
+    assert listed(part_number="ax") == [d, *live, rr1, ra2]
     pages = page_through(ev.list_artifacts, "2")
-    assert [len(p) for p in pages] == [2, 2, 2]
+    assert [len(p) for p in pages] == ([2, 2, 2] if deletes else [2, 2, 2, 1])
     assert [(r["kind"], r["name"]) for p in pages for r in p] == [x[:2] for x in listed()]
     refused(
         ev.wire.send("GET", ev.path("artifacts"), query={"colour": "red"}),
@@ -2008,9 +2105,11 @@ def test_e13_purges_what_was_deleted_strictly_longer_ago_than_the_retention(loca
 
 @rule("E13.pointer-of-purged")
 def test_e13_purging_a_run_a_pointer_still_names_hands_the_pointer_on(local):
-    """Only an imported delete leaves a pointer naming a deleted run (§6.7): the kit has no
-    importer login, so this runs on the reference server only."""
+    """Only an imported delete on a server offering E6 leaves a pointer naming a deleted run
+    (§6.7; without E6 it hands the pointer on): the kit has no importer login, so this runs on
+    the reference server only."""
     _running, ev = local
+    server_target.needs(ev.wire.base_url, "E6")
     older, current = ev.run(start=0, ended=10), ev.run(start=1, ended=20)
     ev.pushed(older)
     ev.pushed(current)

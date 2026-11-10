@@ -21,6 +21,7 @@ from __future__ import annotations
 import copy
 import json
 
+from . import offer
 from .call import Answer, Call
 from .drafts import check_drafts, save_drafts
 from .errors import ApiError, bad_request, conflict, not_found
@@ -71,6 +72,9 @@ BUNDLE_FIELDS = ("bundle_id", "bundle_version", "bundle_sha256", "archive")
 
 
 def token_of(state: State, project: Project) -> str:
+    """The project's change token; ``""`` on a server that does not offer P3 (§6.3, P2)."""
+    if "P3" not in state.calls and not state.broken("P2.token-empty-without-P3"):
+        return ""
     return f"{state.token_prefix}.{project.token}"
 
 
@@ -241,6 +245,9 @@ def _changes_since(state: State, project: Project, since: int) -> tuple[dict, li
 def read_project(call: Call) -> Answer:
     """P2 (the whole project), P3 (``since``) and their twin P2b, + the parts not in ``have``."""
     state = call.state
+    if call.is_read_twin() and call.json().get("since") is not None:
+        offer.refuse_unoffered(state.calls, "P3")  # P2b with since is P3's twin (§6.1)
+        offer.note("P3")
     project = held_project(call)
     if call.is_read_twin():
         since = call.json().get("since")

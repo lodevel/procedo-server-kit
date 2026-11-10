@@ -12,11 +12,12 @@ from __future__ import annotations
 import json
 import threading
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import faults
+from . import faults, offer
 from .blobs import BlobStore
 from .validate import name_key, nfc
 
@@ -152,9 +153,15 @@ class State:
         own_storage: Path | None = None,
         reaches: tuple[Path, ...] = (),
         body_timeout: float = 60.0,
+        calls: Iterable[str] | None = None,
+        people: list[dict] | None = None,
+        boards: dict[str, list[dict]] | None = None,
     ) -> None:
         self.lock = threading.RLock()
         self.users = parse_tokens(tokens)
+        # The server's users U1 lists (§6.8), and the optional calls it offers (§6.1).
+        self.people = offer.check_users(people)
+        self.calls = offer.chosen(calls, self.people)
         self.blobs = BlobStore(root / "api_storage")
         self.max_upload_bytes = max_upload_bytes  # a JSON request, its parts included
         self.max_file_bytes = max_file_bytes  # one large file sent alone (B1, §3.4b)
@@ -186,6 +193,21 @@ class State:
         self.to_delete: dict[int, dict[str, set[str]]] = {}
         self.benches: dict[str, dict] = {}
         self.clock = lambda: datetime.now(timezone.utc)
+        # §3.3 boards_registered: the boards its administrator registered, by project; a run on
+        # any other is refused (E1). None: any serial run becomes a board.
+        self.registered = boards is not None
+        #: The boards registered, by project (an import's new board joins them): E4 lists
+        #: exactly these (``registration``).
+        self.registered_boards: dict[str, set] = {}
+        #: The fault of 3.3.listed-taken only: boards E4 lists that are not registered.
+        self.listed_only: dict[str, set] = {}
+        for project_id, held in (boards or {}).items():
+            project = self.ensure_project(project_id, None)
+            for board in held:
+                made = self.ensure_board(
+                    project, board["serial"], board.get("part_number"), board.get("board_revision")
+                )
+                self.registered_boards.setdefault(project_id, set()).add(made.key)
 
     def _add_own_storage(self, root: Path) -> None:
         """An own ``filesystem`` storage (§7.1): marked for this server (§7.2), reached, never

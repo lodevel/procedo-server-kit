@@ -249,6 +249,14 @@ class ParamSpec:
     required: bool
     default: Any
     secret: bool = False
+    #: This PC's setting for the server, never a project's: kept in Settings ▸ Server alone and
+    #: dropped from every entry a project records (:func:`evidence_config.project_entry`).
+    this_pc: bool = False
+    #: The ``choice:…|on`` param this one only means something with: greyed while that is not
+    #: ``on`` (Accept any certificate needs TLS).
+    needs: str = ""
+    #: What the form says under the field while it is ``on``, in the warning colour.
+    warning: str = ""
 
 
 CAPABILITIES_PROBED = frozenset({"list", "write", "rename", "delete"})

@@ -13,7 +13,8 @@ blob. ``verify`` makes the same reads and downloads every blob again, and lists 
 
 It talks to the server the kit's variables name (``PROCEDO_KIT_SERVER``,
 ``PROCEDO_KIT_BENCH_TOKEN``, ``PROCEDO_KIT_MANAGER_TOKEN``, ``PROCEDO_KIT_CA_BUNDLE``); the
-README says when to run each.
+README says when to run each. On a server registering its boards, ``fill`` also needs
+``PROCEDO_KIT_IMPORTER_TOKEN``: it registers its board as the suites register theirs.
 """
 
 from __future__ import annotations
@@ -49,13 +50,20 @@ def main(argv: list[str] | None = None) -> int:
             if args.manifest.exists():
                 print(f"kit_data: {args.manifest} exists: verify it, or name another", file=sys.stderr)
                 return 2
+            if server_target.registers_boards(base):  # its board registered as the suites do
+                if not server_target.seeds_boards():
+                    print("kit_data: your server registers its boards itself: set "
+                          "PROCEDO_KIT_IMPORTER_TOKEN, the kit registers its board with it "
+                          "(see README.md)", file=sys.stderr)  # fmt: skip
+                    return 2
+                server_target.BoardSeeds.install(base)
             written = server_dataset.fill(base, args.manifest)
             print(f"Wrote the data set (project {written['project_id']}, {len(written['reads'])} "
                   f"reads, {len(written['blobs'])} blobs) and {args.manifest}.")  # fmt: skip
             return 0
         problems = server_dataset.verify(base, args.manifest)
-    except server_dataset.DatasetError as exc:
-        print(f"kit_data: {exc}", file=sys.stderr)
+    except (server_dataset.DatasetError, server_target.pytest.fail.Exception) as exc:
+        print(f"kit_data: {exc}", file=sys.stderr)  # the board registration's too
         return 2
     for problem in problems:
         print(f"DIFFERS  {problem}")

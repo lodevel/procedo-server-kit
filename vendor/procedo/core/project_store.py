@@ -65,6 +65,9 @@ SAVED, CHANGED, REFUSED = "saved", "changed", "refused"
 #: The ``code`` of the refusal a change token gets when the storage cannot answer from it: the
 #: app then reads the project whole (``410 gone``).
 GONE = "gone"
+#: The ``code`` of a call the server does not take: a server that stopped offering P3 answers
+#: ``since`` so (``501 unsupported``, contract §6.1), and the app reads the project whole too.
+UNSUPPORTED = "unsupported"
 #: The date every member of a packed archive carries, so one folder packs to one archive.
 _ZIP_DATE = (1980, 1, 1, 0, 0, 0)
 

@@ -12,6 +12,8 @@ from .annotation_entries import (
     CURRENT,
     OVERRIDE,
     TEST,
+    Shown,
+    as_recorded,
     changes,
     current_data,
     heads,
@@ -128,11 +130,18 @@ def preview_key(name: str, key: str) -> str:
     return f"test:{name}" if key == TEST else f"crit:{name}:{key}"
 
 
-def marks(name: str, meta: dict[str, Any] | None, *, absolute: bool = False) -> dict[str, dict]:
+def marks(
+    name: str,
+    meta: dict[str, Any] | None,
+    *,
+    absolute: bool = False,
+    shown: Shown | None = None,
+) -> dict[str, dict]:
     """Who set each current value of the run of test ``name``, and how many entries its key
     holds, by preview key: ``{"verdict": "bob · today 09:12", "verdict_history": 2,
     "comment": "alice · today 08:55", "comment_history": 1}`` (a check's time is short:
-    ``bob · 09:12``; ``absolute``: the date in full, for a report read any day)."""
+    ``bob · 09:12``; ``absolute``: the date in full, for a report read any day; who, as
+    *shown*: ``server_lists.namer`` of the run's store)."""
     found: dict[str, dict] = {}
     for (kind, key), lines in histories((meta or {}).get("entries") or []).items():
         field = "verdict" if kind == OVERRIDE else "comment"
@@ -140,16 +149,19 @@ def marks(name: str, meta: dict[str, Any] | None, *, absolute: bool = False) -> 
         mark[f"{field}_history"] = len(lines)
         head = next(line.entry for line in lines if line.status == CURRENT)
         if value_of(head) is not None:
-            mark[field] = who_when(head, short=key != TEST and not absolute, absolute=absolute)
+            short = key != TEST and not absolute
+            mark[field] = who_when(head, short=short, absolute=absolute, shown=shown or as_recorded)
     return found
 
 
-def report_marks(metas: dict[str, dict[str, Any] | None]) -> dict[str, dict]:
+def report_marks(
+    metas: dict[str, dict[str, Any] | None], shown: Shown | None = None
+) -> dict[str, dict]:
     """:func:`marks` of every test (``metas``: test -> its annotation), dated in full: what a
-    generated report shows under each current verdict and comment."""
+    generated report shows under each current verdict and comment (who, as *shown*)."""
     found: dict[str, dict] = {}
     for name, meta in metas.items():
-        found.update(marks(name, meta, absolute=True))
+        found.update(marks(name, meta, absolute=True, shown=shown))
     return found
 
 

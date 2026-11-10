@@ -1094,7 +1094,7 @@ def _board_entries() -> list[dict]:
 
 @conformance(
     "write_run", "add_board_entries", "read_board_entries", "list_boards",
-    rules=("2.6.board-three-parts", "E4.list", "E5.board", "E15.statuses", "E15.creates-board"),
+    rules=("2.6.board-three-parts", "E4.every-board", "E5.board", "E15.statuses", "E15.creates-board"),
 )  # fmt: skip
 def board_entries_read_back_in_the_order_received(s: Storage, monkeypatch) -> None:
     """A board's lot and fields: saved, changed, already; a board with no run yet is created

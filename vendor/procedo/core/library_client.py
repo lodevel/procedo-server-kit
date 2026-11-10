@@ -52,9 +52,10 @@ from . import (
     project_sync_gateway,
     project_sync_pass,
     project_transport,
+    server_offer,
     server_settings,
 )
-from .evidence_store import EvidenceError, OpContext
+from .evidence_store import EvidenceError, OpContext, credential_key
 from .evidence_tree import TreeIO, make_dirs, read_json
 from .library_entry import KINDS, Entry
 from .project_origin import Origin
@@ -397,19 +398,59 @@ def install(kind: str, remote: Entry, fill: Callable[[Path], None]) -> Path:
 PICKED = "library_server"
 
 
+#: The web server the libraries were last found on (its identity; ``""``: none, or another
+#: kind of server), as :func:`library_server` last read it: what :func:`not_offered` asks,
+#: from memory.
+_last_web_server = [""]
+
+
 def library_server() -> server_settings.Server | None:
     """The server the libraries are on: the one picked last in the Library window,
     else the first of this PC's servers (the picked one renamed or removed too);
-    ``None`` when it has none."""
+    ``None`` when it has none. Reads this PC's settings."""
     found = server_settings.servers()
     picked = str(app_settings.load_app_settings().get(PICKED) or "").strip().casefold()
     chosen = (s for s in found if s.name.strip().casefold() == picked)
-    return next(chosen, found[0] if found else None)
+    server = next(chosen, found[0] if found else None)
+    web = server is not None and server.backend == server_offer.WEB_SERVER
+    _last_web_server[0] = credential_key(server.spec) if web else ""
+    return server
 
 
 def pick_library_server(name: str) -> None:
     """Point every library at this PC's server called *name*, from now on."""
     app_settings.update_app_settings(lambda data: data.update({PICKED: name}))
+
+
+def not_offered() -> str:
+    """Why every entry point of the server's library is greyed: its server is a web server known
+    not to offer the library (L1-L3, contract §6.1); ``""`` otherwise (another server, none, or
+    one whose offer is not known yet). From memory alone (what :func:`library_server` last read,
+    what the server last offered): a menu or a selection asks it, never a file or the server."""
+    identity = _last_web_server[0]
+    lacks = bool(identity) and server_offer.lacks_on(identity, server_offer.LIBRARY)
+    return server_offer.NO_LIBRARY if lacks else ""
+
+
+def refresh_offer() -> None:
+    """Which server the libraries are on now, and what it offers when it is a web server (its
+    ``/info``): read again after this PC's servers changed (Settings ▸ Server's Save), so
+    :func:`not_offered` follows at once. A server that does not answer leaves its offer not
+    known (logged). Reads this PC's settings and the server: on a worker."""
+    try:
+        client = configured()
+    except EvidenceError as exc:
+        log.info("The libraries' server cannot be opened: %s", exc)
+        return
+    session = getattr(client, "session", None)
+    if session is None:
+        return
+    try:
+        session.ready()  # /info: what it offers is noted (server_offer)
+    except EvidenceError as exc:
+        log.info("What the libraries' server offers could not be read: %s", exc)
+    finally:
+        session.close()
 
 
 def configured() -> Any:

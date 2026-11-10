@@ -55,8 +55,10 @@ def parse_form_data(
 ) -> tuple[bytes, dict[str, bytes]]:
     """Split a ``multipart/form-data`` request into its JSON bytes and its file parts.
 
-    Returns the ``json`` part's bytes (un-gzipped) and ``{sha256 hex: bytes}``. Each file
-    part is hashed: a part whose bytes do not match its name is ``422 digest_mismatch``.
+    Returns the ``json`` part's bytes and ``{sha256 hex: bytes}``. No part carries a
+    ``Content-Encoding`` (§2.12): this server refuses one, though the contract only says a
+    server need not read it. Each file part is hashed: a part whose bytes do not match its name
+    is ``422 digest_mismatch``.
     """
     boundary = header_param("content-type", content_type, "boundary")
     if not boundary:
@@ -74,8 +76,8 @@ def parse_form_data(
         if index == 0:
             if name != "json":
                 raise bad_request('The first part must be named "json".')
-            if headers.get("content-encoding", "").strip().lower() == "gzip":
-                data = gunzip(data, "json part")
+            if headers.get("content-encoding"):
+                raise bad_request("The json part is plain JSON, with no Content-Encoding.")
             json_bytes = data
             continue
         if name == "json":

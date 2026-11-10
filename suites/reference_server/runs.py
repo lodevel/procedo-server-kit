@@ -14,7 +14,7 @@ from __future__ import annotations
 import copy
 import hashlib
 
-from . import faults
+from . import faults, offer, registration
 from .call import Answer, Call
 from .entries import (
     add_entries,
@@ -26,7 +26,7 @@ from .entries import (
 from .errors import ApiError, bad_request, conflict, not_a_manager, not_found
 from .multipart import Part
 from .pointers import NOT_MOVED, apply_pointer_rule, hand_over, is_current
-from .state import API_STORE_ID, Project, State, StoredRun
+from .state import API_STORE_ID, Project, State, StoredRun, board_key
 from .storages import check_refs, referenced_again, store_parts
 from .validate import (
     MACHINE_ID,
@@ -80,7 +80,7 @@ def run_answer(state: State, project: Project, run: StoredRun, *, summary: bool)
         _set(obj, "board_revision", board.board_revision)
     obj["pushed_at"] = run.pushed_at
     obj["current"] = is_current(project, run)
-    if run.entries:
+    if run.entries or broken("5.5.annotation-absent"):  # the fault: an empty one, not absent
         obj["annotation"] = {
             "format_version": 1,
             "run_id": run.run_id,
@@ -173,6 +173,8 @@ def push_run(call: Call) -> Answer:
     version = validate_run(run, lot_ok=broken("5.5.lot-format-2-400"))
     if run.get("project_id") not in (None, project_id) and not broken("E1.project-id-match"):
         raise bad_request("The run's project_id is not the path's.")
+    if not call.importing():  # a well-formed bench's run: what a server registering its
+        offer.note(offer.BENCH_RUN)  # boards may refuse (§3.3)
     keeps_sent = importing or faults.on("2.2.answer-fields-ignored")
     pushed_at = (opt_time(run, "pushed_at", "run") if keeps_sent else None) or state.now()
     if importing and broken("import.role-and-flag"):
@@ -198,6 +200,11 @@ def push_run(call: Call) -> Answer:
             kind="corrupt",
             run_id=run_id,
         )
+    # §6.8, §3.3: a replay is already, an import a record: neither is checked
+    if (held is None and not importing) or broken("U1.operator-exempt"):
+        offer.known_operator(state.calls, state.people, run.get("operator"), "operator")
+    if (held is None and not importing) or broken("E1.unknown-board-exempt"):
+        _registered_board(state, project, run, version)
     refs = [(item["sha256"], item["size"], item["store_id"]) for item in run["files"]]
     try:
         to_write = check_refs(state, project_id, refs, call.parts, "run")
@@ -212,15 +219,40 @@ def push_run(call: Call) -> Answer:
 
     referenced_again(state, project_id, refs)
     project, stored = _store_new(call, run, version, raw_sha, pushed_at)
+    if importing:  # an imported run's board is one of the server's (§3.3)
+        registration.register(state, project_id, stored.board_key)
     state.seen_bench(run["machine_id"], run.get("station_id"))
     if importing and broken("import.bench-seen-not-imported"):
         state.benches[run["machine_id"]]["first_seen"] = pushed_at
-    if not importing or broken("import.E1-no-pointer"):  # imported: no pointer (§6.10)
+    if not importing:
         apply_pointer_rule(state, project, stored)
+    elif "E6" in state.calls:  # imported, E6 offered: no pointer moves, the importer sets it
+        # the 5.13 fault makes an imported incomplete run current too
+        stopped = not stored.obj["complete"]
+        if broken("import.E1-no-pointer") or (broken("5.13.incomplete-never-current") and stopped):
+            apply_pointer_rule(state, project, stored)
+    elif not broken("import.E1-rule-without-E6"):  # imported, no E6: the server picks (§6.7)
+        apply_pointer_rule(state, project, stored, tie_to_greater=True)
     result = _push_result("saved", project, stored, run if broken("E1.answer") else None)
     if faults.on("2.4.case-first-spelling"):
         result.update({k: run[k] for k in ("serial", "part_number", "board_revision") if k in run})
     return Answer(result)
+
+
+def _board_key_of(run: dict, version: int) -> tuple:
+    if version >= 2:
+        return board_key(run.get("part_number"), run.get("board_revision"), run["serial"])
+    return board_key(None, None, run["serial"])
+
+
+def _registered_board(state: State, project: Project | None, run: dict, version: int) -> None:
+    """§3.3 ``boards_registered``: a run on a board that is not registered is ``409
+    unknown_board``, kind ``invalid``, one of the server's own codes (§4.3; ``registration``)."""
+    project_id = project.project_id if project is not None else ""
+    key = _board_key_of(run, version)
+    registration.check(
+        state, project_id, key, run["serial"], let_through=faults.on("E1.unknown-board")
+    )
 
 
 def _store_new(
@@ -367,7 +399,13 @@ def delete_run(call: Call) -> Answer:
         if fields["deleted_was_current"] is None:
             fields["deleted_was_current"] = is_current(project, run)
         run.deleted = fields
-        if not importing or call.state.broken("import.E11-E12-delete"):  # imported: nothing
+        # imported: nothing handed on where E6 sets the pointers, as a bench's where it is not
+        with_e6 = "E6" in call.state.calls
+        if (
+            not importing
+            or (with_e6 and call.state.broken("import.E11-E12-delete"))
+            or (not with_e6 and not call.state.broken("import.delete-hands-on-without-E6"))
+        ):
             moved = hand_over(call.state, project, run, fields["deleted_bench"])
     call.state.seen_bench(fields["deleted_bench"])
     answer: dict = {"run": run_answer(call.state, project, run, summary=True)}

@@ -9,9 +9,10 @@ what the JSON API asks of a call:
 
 * **GET reads, POST writes**, a path built from quoted segments and a query whose ``+`` is a
   plus (a part number may hold ``/``, ``#`` or ``+``).
-* **gzip** on JSON both ways (§2, Compression): a request's JSON (the whole body, or the
-  ``json`` part of a multipart one) is compressed above :data:`GZIP_OVER`; an answer, or its
-  ``json`` part, says whether it is.
+* **gzip** on a plain JSON body both ways (§2, Compression): a request's JSON body is
+  compressed above :data:`GZIP_OVER`; an answer says whether it is. A multipart body's parts
+  never are: its ``json`` part is plain JSON, as many servers' multipart parsers drop a part's
+  headers.
 * **Parts** (§3.3): a write that carries files is ``multipart/form-data``, its ``json`` part
   first, then one part per distinct content named ``sha256:<hex>``; an answer with parts is
   ``multipart/mixed``. Bytes never travel as base64.
@@ -36,6 +37,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote, urlencode
 
+from . import server_offer
 from .evidence_http import (
     ECHOED_KINDS,
     STATUS_KIND,
@@ -106,15 +108,23 @@ class ApiWire:
             yield scope
 
     def close(self) -> None:
-        self.wire.pool.close()
+        self.wire.openers.close()
+
+    @property
+    def unchecked(self) -> bool:
+        """Whether the last call checked no certificate (this PC's Accept any certificate)."""
+        return self.wire.openers.unchecked
 
     def info(self) -> dict[str, Any]:
-        """``/info`` (getInfo), read once: which API this server speaks, and this login."""
+        """``/info`` (getInfo), read once: which API this server speaks, this login, and the
+        optional calls it offers (noted for the whole app: :mod:`server_offer`)."""
         with self._info_lock:
             try:
-                return self.wire.info()
+                info = self.wire.info()
             except OSError as exc:
                 raise os_error(exc) from exc
+        server_offer.note(self.identity, offered_calls(info))
+        return info
 
     def instance_id(self, cancel: threading.Event | None = None) -> str:
         """The server's own name for itself (S1's ``instance_id``, ``data_format.md`` §3.1),
@@ -141,7 +151,12 @@ class ApiWire:
         """One call of the contract (``op`` is its operationId: what a log line and a refusal
         name). ``segments`` are the path below ``/api/v1``, each quoted on its own; ``parts``
         makes the body multipart; ``token`` replaces the store's login for this call alone
-        (a manager's, asked for at the moment)."""
+        (a manager's, asked for at the moment). An optional call this server's ``/info`` does
+        not list is refused here, nothing sent (contract §6.1, :func:`server_offer.refused`)."""
+        info = self.wire.read_info()
+        why = server_offer.refused(op, query, body, offered_calls(info)) if info else ""
+        if why:
+            raise EvidenceError("invalid", why, code=server_offer.UNSUPPORTED)
         url = self.wire.api("/".join(quote(str(s), safe="") for s in segments))
         if query:
             url += "?" + urlencode({k: str(v) for k, v in query.items()}, quote_via=quote, safe="")
@@ -226,6 +241,23 @@ def require_json_api(info: dict[str, Any]) -> dict[str, Any]:
     return info
 
 
+def offered_calls(info: dict[str, Any]) -> frozenset[str]:
+    """The optional calls a server offers, by their ids (*info*'s ``calls``, contract §6.1):
+    a call missing from it answers ``501 unsupported``. A field the app does not know in
+    ``/info`` is ignored, as is an entry here that is not a string."""
+    calls = info.get("calls")
+    if not isinstance(calls, list):
+        return frozenset()
+    return frozenset(call for call in calls if isinstance(call, str))
+
+
+def boards_registered(info: dict[str, Any]) -> bool:
+    """Whether the server registers its boards itself (*info*'s ``boards_registered``, contract
+    §3.3): a run on a board it does not list (E4) is refused, so a bench picks from E4's list.
+    Anything but ``true`` is ``false``, the usual case."""
+    return info.get("boards_registered") is True
+
+
 def active_store(storages: list[Any]) -> int:
     """The ``store_id`` new files go to (S1, §3.1). Only the server's own storage (``api``) is
     written yet: another backend is a project's own storage, which this app does not reach yet,
@@ -267,10 +299,8 @@ def _form(json_part: bytes, parts: list[Part]) -> tuple[bytes, str]:
         out.extend("".join(f"{h}\r\n" for h in headers).encode("utf-8") + b"\r\n")
         out.extend(data + b"\r\n")
 
+    # plain JSON, never gzipped: many servers' multipart parsers drop a part's headers (§2)
     head = ['Content-Disposition: form-data; name="json"', "Content-Type: application/json"]
-    if len(json_part) > GZIP_OVER:
-        json_part = gzip.compress(json_part)
-        head.append("Content-Encoding: gzip")
     add(head, json_part)
     sent: set[str] = set()
     for p in parts:
@@ -310,9 +340,7 @@ def _mixed(body: bytes, content_type: str, op: str) -> Answer:
         content = body[head_end + 4 : end]
         name = _NAME.search(headers.get("content-disposition", ""))
         if name is not None and name.group(1) == "json":
-            if headers.get("content-encoding", "").strip().lower() == "gzip":
-                content = _gunzip(content, op)
-            data = _json_object(content, op)
+            data = _json_object(content, op)  # plain JSON: a part carries no encoding (§2)
         elif name is not None:
             parts[name.group(1)] = content
         pos = end + 2 + len(marker)

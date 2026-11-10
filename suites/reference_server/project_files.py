@@ -86,6 +86,8 @@ def never_travels(path: str) -> bool:
     """The path, as spelled, is not a project file (§4.2): under ``bundle/`` or ``releases/``,
     or one the app's sync never carries (its names compared exactly, as the sync compares
     them)."""
+    if faults.on("2.4.exact-exceptions"):  # the fault: the names compared by case folding
+        path = path.casefold()
     return path.split("/", 1)[0] in OBJECT_DIRS or bool(exclusion(path))
 
 

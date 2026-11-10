@@ -15,6 +15,7 @@ import json
 from collections.abc import Callable
 from functools import cmp_to_key
 
+from . import offer, registration
 from .call import Answer, Call
 from .errors import bad_request, conflict, not_found, unsupported_filter
 from .multipart import Part
@@ -151,6 +152,8 @@ def push_artifact(call: Call) -> Answer:
     broken = state.broken
     validate_artifact(art, blank_serial_ok=broken("5.10.serial-by-kind-400"))
     key = _slot_key(art["kind"], artifact_board(art), art["name"])
+    if art["serial"] != "" and not importing:  # a bench's write on a board (§3.3)
+        offer.note(offer.BENCH_RUN)
     project = state.projects.get(project_id)
     slot = project.artifacts.get(key) if project else None
     keep_null = ("replaces",) if art["kind"] == "draft" else ()
@@ -187,6 +190,8 @@ def push_artifact(call: Call) -> Answer:
         raise conflict(
             "deleted", f"A manager deleted {slot.name}; it cannot be sent again under that name."
         )
+    if same is None:  # a replay is never refused for its board
+        _check_board(call, art, key)
     refs = [(art["sha256"], art["size"], art["store_id"])]
     to_write = check_refs(state, project_id, refs, call.parts, "artifact")
     store_parts(state, project_id, to_write, call.parts)  # a part sent again heals a damaged blob
@@ -198,6 +203,7 @@ def push_artifact(call: Call) -> Answer:
     referenced_again(state, project_id, refs)
     project = state.ensure_project(project_id, None)
     slot = _ensure_slot(state, project, key, art)
+    _register_board(call, art, key)
     if generation is None:
         generation = max((item.obj["generation"] for item in items), default=0) + 1
     stored_obj["generation"] = generation
@@ -227,12 +233,31 @@ def _push_draft(
         assert project is not None and slot is not None
         answer = artifact_answer(state, project, slot, held, full=True)
         return Answer({"status": "changed", "artifact": answer})
+    _check_board(call, art, key)
     project = state.ensure_project(call.params["project_id"], None)
     slot = _ensure_slot(state, project, key, art)
+    _register_board(call, art, key)
     slot.items = [ArtifactItem(obj=art)]
     state.seen_bench(art["machine_id"])
     answer = artifact_answer(state, project, slot, slot.latest(), full=True)
     return Answer({"status": "saved", "artifact": answer})
+
+
+def _check_board(call: Call, art: dict, key: tuple) -> None:
+    """§3.3: a bench's report or draft on a board that is not registered, ``409
+    unknown_board``, nothing written (an export names no board; an import is taken)."""
+    state = call.state
+    checked = not call.importing() or state.broken("3.3.import-any-call")  # the fault: checked
+    if art["serial"] != "" and checked:
+        project_id = call.params["project_id"]
+        let_through = state.broken("E10.unknown-board")
+        registration.check(state, project_id, key[1], art["serial"], let_through=let_through)
+
+
+def _register_board(call: Call, art: dict, key: tuple) -> None:
+    """§3.3: an imported report's or draft's board becomes registered."""
+    if art["serial"] != "" and call.importing() and not call.state.broken("3.3.import-registers"):
+        registration.register(call.state, call.params["project_id"], key[1])
 
 
 def _ensure_slot(state: State, project: Project, key: tuple, art: dict) -> ArtifactSlot:
@@ -397,7 +422,7 @@ def list_artifacts(call: Call) -> Answer:
             rows.append((_row_key(slot, item), slot, item))
     order = cmp_to_key(lambda a, b: _order(a, b, broken))
     rows.sort(key=lambda row: order(row[0]))
-    if cursor is not None:
+    if cursor is not None and not broken("3.1.opaque-continuation"):
         rows = [row for row in rows if _order(row[0], cursor, broken) > 0]
     page = rows[:limit]
     artifacts = []

@@ -23,7 +23,7 @@ Qt-free, I/O-free: the stores keep the entries, this module reads them.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any
@@ -319,14 +319,32 @@ def when_text(saved_at: str, *, short: bool = False, absolute: bool = False, tod
     return f"{at.day} {at.strftime('%b')} {clock}"
 
 
-def who_when(entry: Mapping[str, Any], *, short: bool = False, absolute: bool = False) -> str:
-    """``bob · today 09:12``: who saved the entry and when."""
+#: How who saved an entry shows: as recorded, unless the caller names its server's users
+#: (``server_lists.namer``: a web server's user by display name).
+Shown = Callable[[str], str]
+
+
+def as_recorded(name: str) -> str:
+    """A name as it was recorded."""
+    return name
+
+
+def who_when(
+    entry: Mapping[str, Any],
+    *,
+    short: bool = False,
+    absolute: bool = False,
+    shown: Shown = as_recorded,
+) -> str:
+    """``bob · today 09:12``: who saved the entry (*shown*) and when."""
     when = when_text(entry.get("saved_at", ""), short=short, absolute=absolute)
-    return " · ".join(x for x in (entry.get("by") or "", when) if x)
+    by = entry.get("by") or ""
+    return " · ".join(x for x in (shown(by) if by else "", when) if x)
 
 
-def who(entry: Mapping[str, Any] | None) -> str:
-    return (entry or {}).get("by") or "someone"
+def who(entry: Mapping[str, Any] | None, shown: Shown = as_recorded) -> str:
+    by = (entry or {}).get("by") or ""
+    return shown(by) if by else "someone"
 
 
 def saved_text(outcomes: list[Mapping[str, Any]]) -> str:
@@ -343,11 +361,12 @@ def saved_text(outcomes: list[Mapping[str, Any]]) -> str:
     return f"Saved ({', '.join(parts)})." if parts else "Saved (nothing changed)."
 
 
-def changed_text(o: Mapping[str, Any], label: str) -> str:
+def changed_text(o: Mapping[str, Any], label: str, shown: Shown = as_recorded) -> str:
     """One entry that arrived after someone else's: ``The verdict of {9} was changed by bob at
-    09:12, after you opened this run: bob's PASS stays; your FAIL is kept in its history.``"""
+    09:12, after you opened this run: bob's PASS stays; your FAIL is kept in its history.``
+    (who, as *shown*)."""
     mine, theirs = o["entry"], o["current"]
-    name = who(theirs)
+    name = who(theirs, shown)
     clock = when_text(theirs.get("saved_at", ""), short=True)
     at = f" at {clock}" if clock else ""
     if mine["kind"] == OVERRIDE:
@@ -364,12 +383,12 @@ def changed_text(o: Mapping[str, Any], label: str) -> str:
     )
 
 
-def line_status(line: Line) -> str:
-    """What a history line says of itself."""
+def line_status(line: Line, shown: Shown = as_recorded) -> str:
+    """What a history line says of itself (who, as *shown*)."""
     if line.status == CURRENT:
         return "current"
     other = line.other or {}
     if line.status == REPLACED:
         clock = when_text(other.get("saved_at", ""), short=True)
-        return f"replaced by {who(other)}'s" + (f" at {clock}" if clock else "")
-    return f"saved after {who(other)}'s without seeing it: kept here, not current"
+        return f"replaced by {who(other, shown)}'s" + (f" at {clock}" if clock else "")
+    return f"saved after {who(other, shown)}'s without seeing it: kept here, not current"

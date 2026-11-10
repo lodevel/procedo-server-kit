@@ -137,7 +137,9 @@ def test_info_answers_exactly_its_fields_to_a_valid_token(server):
     reply = server.call("GET", "info", token=server_target.token("bench"))
     assert reply.status == 200
     info = reply.json
-    assert set(info) == {"server", "api_versions", "server_time", "limits", "user"}
+    fields = {"server", "api_versions", "server_time", "limits", "calls", "boards_registered"}
+    assert set(info) == fields | {"user"}
+    assert isinstance(info["boards_registered"], bool), info
     assert isinstance(info["server"], str) and info["server"]
     assert "1" in info["api_versions"]
     assert TIME.fullmatch(info["server_time"]), info["server_time"]
@@ -190,9 +192,9 @@ def test_any_other_call_without_a_valid_token_is_401(server, token):
 
 @pytest.mark.rule("4.3.403-denied")
 def test_a_valid_login_without_the_right_is_403_never_401(server, tmp_path):
-    """§3.5: a purge from a login that is not a manager, of a project the server holds (the
-    bench made it just before), so the answer cannot be the project's absence: the contract
-    does not say whether a server looks at the role or at the project first."""
+    """§3.5: a push of changes (P9, a core call every server takes) from the manager's login,
+    which holds no bench role, to a project the server holds (the bench made it just before),
+    so the answer cannot be the project's absence."""
     project = server_target.fresh_id()
     bench = server_target.token("bench")
     session = ApiSession(
@@ -209,11 +211,11 @@ def test_a_valid_login_without_the_right_is_403_never_401(server, tmp_path):
         session.close()
     reply = server.call(
         "POST",
-        f"projects/{project}/purge",
-        token=server_target.token("bench"),
-        body={"machine_id": MACHINE},
+        f"projects/{project}/changes",
+        token=server_target.token("manager"),
+        body={"changes": []},
     )
-    check_envelope(reply, 403, "denied", "not_a_manager")
+    check_envelope(reply, 403, "denied")
 
 
 @pytest.mark.rule("4.3.404-signed", "6.1.item-not-held-404")

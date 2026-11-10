@@ -54,6 +54,8 @@ def _api_storage(call: Call, store_id: int) -> None:
     """The path's storage is held (else ``404``) and is the server's own (``api``, else
     ``400``: the app reaches another directly, §3.2)."""
     storage = call.state.storage_of(store_id)
+    if storage is None and call.state.broken("B1.api-storage-only"):
+        raise bad_request(f"No storage {store_id}.")  # the fault: 400, not 404
     if storage is None:
         raise not_found(f"No storage {store_id}.")
     if storage["backend"] != "api" and not call.state.broken("B1.api-storage-only"):

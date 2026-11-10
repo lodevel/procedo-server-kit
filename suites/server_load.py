@@ -4,8 +4,9 @@ then everything read back.
 Each simulated bench is a thread with its own connection and ``machine_id``, testing a board of
 its own in one shared project, round after round: it pushes a run with its record and a picture
 (E1), uploads a report (E10), annotates the run (E7), sets the board's lot (E15), and reads the
-run and the report back (E3, E9), comparing every field and byte with what it sent. When every
-bench is done, each run is read again and each board listed (E5): nothing may be missing.
+run and the report back (E3, E9), comparing every field and byte with what it sent; the lot
+only when the server offers E15 (§6.1). When every bench is done, each run is read again and
+each board listed (E5): nothing may be missing.
 
 :func:`run` **fails** (its :class:`Load`'s ``failures``) on anything lost, refused or read back
 different. A ``429`` or ``503`` carrying ``Retry-After`` is not a failure: the bench waits as the
@@ -24,6 +25,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
+import pytest
 import server_target
 from test_server_contract_evidence import TEST_A, Evidence, Wire, board_entry, comment, parse
 
@@ -72,7 +74,12 @@ class Load:
 class _Bench:
     """One simulated bench."""
 
-    def __init__(self, number: int, base_url: str, project: str, store: int, load: Load) -> None:
+    def __init__(
+        self, number: int, base_url: str, project: str, store: int, load: Load, offered: frozenset
+    ) -> None:
+        #: The optional calls the server offers (§6.1): a bench sets a lot (E15) only when it
+        #: offers it.
+        self.offered = offered
         self.wire = Wire(base_url)
         self.ev = Evidence(self.wire, project, store)
         self.load = load
@@ -120,9 +127,11 @@ class _Bench:
             self.load.failed(f"{self.serial} E1 answered {pushed.get('status')!r}, not saved")
             return
         self.runs[run["run_id"]] = run
-        data = f"<p>{self.serial} round {number} {secrets.token_hex(16)}</p>".encode()
         name = f"report-{number}.html"
-        art = ev.artifact("report", name, self.serial, "AX", "B", data=data, machine_id=self.machine)
+        data = f"<p>{self.serial} round {number} {secrets.token_hex(16)}</p>".encode()
+        art = ev.artifact(
+            "report", name, self.serial, "AX", "B", data=data, machine_id=self.machine
+        )
         reply = self.call("E10 push report", lambda: ev.push_artifact(art))
         if self.answered("E10 push report", reply):
             self.reports[name] = data
@@ -130,12 +139,13 @@ class _Bench:
         reply = self.call("E7 annotate", lambda: ev.annotate(run["run_id"], [note]))
         if self.answered("E7 annotate", reply):
             self.notes[run["run_id"]] = note["entry_id"]
-        lot = board_entry("lot", f"L-{self.serial}-{number}", None)
-        query = {"part_number": "AX", "board_revision": "B"}
-        path = ev.path("boards", self.serial, "entries")
-        reply = self.call("E15 board entry", lambda: self.wire.send(
-            "POST", path, query=query, body={"entries": [lot]}))  # fmt: skip
-        self.answered("E15 board entry", reply)
+        if "E15" in self.offered:
+            lot = board_entry("lot", f"L-{self.serial}-{number}", None)
+            query = {"part_number": "AX", "board_revision": "B"}
+            path = ev.path("boards", self.serial, "entries")
+            reply = self.call("E15 board entry", lambda: self.wire.send(
+                "POST", path, query=query, body={"entries": [lot]}))  # fmt: skip
+            self.answered("E15 board entry", reply)
         self.check_run(run["run_id"], with_parts=True)
         self.check_report(name)
 
@@ -209,7 +219,8 @@ def run(base_url: str, *, benches: int, seconds: float = 0.0, rounds: int = 3) -
         load.failed("the server lists no api storage: the benches send their bytes there")
         return load
     project = server_target.fresh_id()
-    every = [_Bench(n, base_url, project, found[0], load) for n in range(benches)]
+    offered = server_target.offered(base_url)
+    every = [_Bench(n, base_url, project, found[0], load, offered) for n in range(benches)]
     started = time.monotonic()
     counts = [0] * benches
 
@@ -223,7 +234,7 @@ def run(base_url: str, *, benches: int, seconds: float = 0.0, rounds: int = 3) -
                     break
                 bench.one_round(counts[index])
                 counts[index] += 1
-        except Exception as exc:  # a bench that stops is a failure, reported, never a hang
+        except (Exception, pytest.fail.Exception) as exc:  # a bench that stops: a failure
             load.failed(f"{bench.serial} stopped: {type(exc).__name__}: {exc}")
 
     threads = [threading.Thread(target=work, args=(n,), daemon=True) for n in range(benches)]
@@ -236,7 +247,7 @@ def run(base_url: str, *, benches: int, seconds: float = 0.0, rounds: int = 3) -
     for bench in every:
         try:
             bench.check_everything()
-        except Exception as exc:
+        except (Exception, pytest.fail.Exception) as exc:
             load.failed(f"{bench.serial} read back: {type(exc).__name__}: {exc}")
         finally:
             bench.close()

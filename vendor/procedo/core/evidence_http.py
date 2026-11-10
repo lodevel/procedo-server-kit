@@ -10,8 +10,9 @@ projects and the library alike:
   maps it to the app's kind, an echoed ``kind`` the app knows wins, and the kind picks the
   exception: the ``OSError`` shapes where one exists, and :class:`evidence_store.EvidenceError`
   for ``invalid`` / ``corrupt`` / ``internal``, which have none.
-* **TLS is verified, never switched off**: plain HTTP is chosen explicitly (``insecure``), and
-  the two flags contradicting each other is refused before anything is sent.
+* **TLS is verified** unless this PC accepts any certificate from that server (which opener a
+  call takes, and a refusal in words: :mod:`server_certificate`); plain HTTP is chosen
+  explicitly (``insecure``), and the two flags contradicting each other is refused first.
 * **Identity is one spelling of one server** (A.2, A.4 row 5): case, default port, trailing
   slashes and an IPv6 literal all collapse, the scheme is the backend name so toggling
   ``insecure`` never re-spells it, and the path prefix is part of it. It files the token and
@@ -39,6 +40,7 @@ from urllib.parse import urlsplit
 from . import http_keepalive
 from .evidence_store import Absent, AuthRequired, EvidenceError
 from .evidence_tree import OperationScope, ScopeLocal, enter_scope
+from .server_certificate import Openers, got_through, refused
 
 log = logging.getLogger(__name__)
 
@@ -93,12 +95,6 @@ class NotOurServer(ConnectionError):
     address answers, but it is not a test-bench server" instead of "cannot reach it",
     which would send the user to the network over a proxy or a portal in the way.
     """
-
-
-class CertificateRejected(PermissionError):
-    """TLS trust failed. A ``PermissionError``, so it classifies as ``denied`` and
-    never as ``unreachable``: the host answered, and hiding a wrong hostname or an
-    expired certificate behind an offline banner is what that rule prevents."""
 
 
 def _as_error(kind: str, message: str) -> BaseException:
@@ -215,8 +211,9 @@ class _Wire:
         self.requests = 0  # what a cost pin counts
         self._info: dict[str, Any] | None = None
         self._local = ScopeLocal()
-        self.pool = http_keepalive.Pool()
-        self._opener = self._build_opener()
+        self._check_flags()
+        #: Which opener a call takes: this PC's choice for this server, asked before each one.
+        self.openers = Openers(self.identity, endpoint.tls, endpoint.ca_bundle, self._opener)
 
     @property
     def scope(self) -> OperationScope | None:
@@ -232,14 +229,9 @@ class _Wire:
 
     # -- transport ------------------------------------------------------------------
 
-    def _build_opener(self) -> urllib.request.OpenerDirector:
-        """One opener: a VERIFIED TLS context with an optional corporate CA, and the
-        proxy from the field rather than from an environment variable.
-
-        ``insecure`` means plain HTTP and nothing else — verification is not
-        switchable off (§7) — and the two flags contradict each other in BOTH
-        directions, refused here and not at the first upload, where the run is over.
-        """
+    def _check_flags(self) -> None:
+        """``insecure`` means plain HTTP and nothing else, and the two flags contradict each
+        other in BOTH directions, refused here and not at the first upload, the run over."""
         if self.endpoint.tls and self.endpoint.insecure:
             raise EvidenceError(
                 "invalid",
@@ -260,9 +252,10 @@ class _Wire:
                 f"the address is {scheme}:// but plain HTTP is "
                 f"{'not ' if self.endpoint.insecure else ''}asked for",
             )
-        context = ssl.create_default_context(cafile=self.endpoint.ca_bundle or None)
-        context.check_hostname = True
-        context.verify_mode = ssl.CERT_REQUIRED
+
+    def _opener(self, context: ssl.SSLContext, pool: Any) -> urllib.request.OpenerDirector:
+        """One opener: *context* (the TLS :class:`server_certificate.Openers` chose), the
+        connections kept in *pool*, and the proxy from the field, never from the environment."""
         proxy = self.endpoint.proxy.strip()
         if proxy.lower() == "direct":
             handler: urllib.request.BaseHandler = urllib.request.ProxyHandler({})
@@ -271,8 +264,8 @@ class _Wire:
         else:
             handler = urllib.request.ProxyHandler()  # the system's, PAC/WPAD included
         return urllib.request.build_opener(
-            http_keepalive.KeepAliveHTTPSHandler(self.pool, context),
-            http_keepalive.KeepAliveHTTPHandler(self.pool),
+            http_keepalive.KeepAliveHTTPSHandler(pool, context),
+            http_keepalive.KeepAliveHTTPHandler(pool),
             handler,
         )
 
@@ -309,8 +302,9 @@ class _Wire:
         request = urllib.request.Request(url, data=body, headers=sending, method=method)
         log.debug("%s %s", method, url)  # never the headers: one of them is the token
         self.requests += 1
+        opener = self.openers.opener()
         try:
-            with self._opener.open(request, timeout=self.endpoint.timeout_s) as response:
+            with opener.open(request, timeout=self.endpoint.timeout_s) as response:
                 answer = _Answer(
                     response.status, _lower(response.headers.items()), self._read(response, sink)
                 )
@@ -319,7 +313,8 @@ class _Wire:
         except EvidenceError:
             raise
         except Exception as exc:  # every transport failure leaves as an OSError
-            raise _transport_error(exc, what or url) from exc
+            raise _transport_error(exc, what or url, self) from exc
+        got_through(self.identity)
         self._verify_signature(answer, what or url)
         if answer.status >= 400 and answer.status not in allow:
             raise _refusal(answer, what or url)
@@ -365,6 +360,10 @@ class _Wire:
         if self._info is None:
             answer = self.request("GET", self.api("info"), what="/info")
             self._info = _json_object(answer.body)
+        return self._info
+
+    def read_info(self) -> dict[str, Any] | None:
+        """``/info`` as this wire read it; ``None`` before it was."""
         return self._info
 
 
@@ -425,15 +424,15 @@ def _refusal(answer: _Answer, what: str) -> BaseException:
     return _as_error(kind, f"{said} ({where})" if where else said)
 
 
-def _transport_error(exc: BaseException, what: str) -> BaseException:
+def _transport_error(exc: BaseException, what: str, wire: _Wire) -> BaseException:
     """A failure that never became an answer. A rejected certificate is ``denied``,
     never ``unreachable``: the host answered and TRUST failed, and reporting it as a
     network problem hides a wrong hostname or an expired certificate behind an
-    offline banner."""
+    offline banner. It is said in words, Python's text logged (:mod:`server_certificate`)."""
     where = f" ({what})" if what else ""
     reason = getattr(exc, "reason", exc)
     if isinstance(reason, ssl.SSLCertVerificationError):
-        return CertificateRejected(f"the server's certificate was rejected: {reason}{where}")
+        return refused(reason, wire.identity, wire.endpoint, where, wire.scope)
     if isinstance(reason, ssl.SSLError):
         return ConnectionError(f"TLS failed: {reason}{where}")
     if isinstance(reason, TimeoutError):

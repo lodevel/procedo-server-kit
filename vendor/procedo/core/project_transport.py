@@ -22,6 +22,7 @@ from .evidence_sftp_conn import paramiko_available
 from .evidence_store import EvidenceError
 from .evidence_tree import TreeIO
 from .project_origin import Origin
+from .server_certificate import without_choice
 
 FTPS = "ftps"
 SFTP = "sftp"
@@ -100,7 +101,7 @@ def _api_source(params: dict[str, Any], credentials: Credentials | None) -> Any:
     from .project_store_api import ApiProjectSource
 
     try:
-        endpoint = ApiEndpoint(**params)
+        endpoint = ApiEndpoint(**without_choice(params))  # the switch is this PC's alone
     except TypeError as exc:
         raise EvidenceError(
             "invalid", f"the origin record's parameters are not an endpoint: {exc}"

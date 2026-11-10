@@ -22,12 +22,13 @@ exactly what the app will do.
 | File (in `suites/`) | What it checks |
 |---|---|
 | `test_server_http_conformance.py` | The rules every answer follows, with plain HTTP: `/info` and its fields; `401` with `WWW-Authenticate` and only the public `details` when the token is missing or wrong; `403` (never `401`) for a valid login without the right; `404` with the server's signature; the headers `X-Bench-Store: v1`, `X-Request-Id` and `Date` on every answer, `Date` within 2 s of `server_time`; the error envelope (`code`, `kind`, `message`, `request_id` equal to `X-Request-Id`); one connection serving five requests in a row; the base address with and without its trailing slash; no answer holding the API's own address. |
-| `test_server_contract_conventions.py` | The contract's conventions, transport and errors (§2, §3, §4, §9), with raw HTTP so nothing a client tolerates hides a fault: every answer checked against the twin `procedo_api.openapi.yaml` (shipped beside the cases) and walked for `null` and the headers; `PUT`, `DELETE`, `PATCH`, `HEAD` and a call the server does not take (`405`/`501 unsupported`); unknown fields kept and *answer* fields ignored; names stored in NFC and answered in their first spelling; a malformed test id `400` before the project is looked at; board names `""` or with blanks around them; `format_version` and own fields; text sent in the wrong form or with a wrong version; path names no PC can hold; a query parameter a call does not define; gzip bodies, the replay digest of the JSON with every encoding undone, multipart answers never gzipped; a `cursor` and a `token` taken back; names holding `/`, `#`, `+` and blanks in a path and a query; `401` on every kind of call; a token anywhere but the header; every login reads, a write needs its role, `not_a_manager`; `411`, `413` before the body is read, `416`, `422`; each `409` with its kind and `details`; one server clock. |
+| `test_server_contract_conventions.py` | The contract's conventions, transport and errors (§2, §3, §4, §9), with raw HTTP so nothing a client tolerates hides a fault: every answer checked against the twin `procedo_api.openapi.yaml` (shipped beside the cases) and walked for `null` and the headers; `PUT`, `DELETE`, `PATCH`, `HEAD` and a call the server does not take (`405`/`501 unsupported`); unknown fields kept and *answer* fields ignored; names stored in NFC and answered in their first spelling; a malformed test id `400` before the project is looked at; board names `""` or with blanks around them; `format_version` and own fields; text sent in the wrong form or with a wrong version; path names no PC can hold; a query parameter a call does not define; gzip bodies, the replay digest of the JSON with every encoding undone, multipart answers never gzipped, whole or a part; a `cursor` and a `token` taken back; names holding `/`, `#`, `+` and blanks in a path and a query; `401` on every kind of call; a token anywhere but the header; every login reads, a write needs its role, `not_a_manager`; `411`, `413` before the body is read, `416`, `422`; each `409` with its kind and `details`; one server clock. |
 | `test_evidence_conformance_api.py` | Every evidence action: runs (complete, stopped, staged), the current-run mark, test ids and renames, reports, exports and drafts with their generations, annotation and board entries, delete, restore, purge, the trash. |
 | `test_project_conformance.py` | Every project action: create, read, changes since a token, pushes with conflicts, text and binary files (inside the request, as parts, and alone over 1 MiB, both ways), bundles, tests and their ids, drafts, releases, a release made from a working copy. Every path that never travels as a file (contract §5.2, rule P11), generated from the app's own list (`never_travels.py`): each refused by a new project (`400 bad_request`, nothing created) and by a push (`refused`, kind `invalid`, nothing written, the next change of the request saved). |
 | `test_library_conformance.py` | Every library action: publish, list, download, a version published once, conflicts, an archive over 1 MiB both ways. |
 | `test_server_contract_evidence.py` | The evidence rules the app's client would hide, with plain HTTP (the client checks a request before sending it, sorts lists, recomputes `current` and a board's lot, reads an error's kind and not its status): a run read back field by field (phases, measurements, files, unknown fields), RunSummary, `deleted_by` the authenticated login, format-1 runs and their board, `lot` on a format-2 run, `run_conflict`, a file over 1 MiB; every E2 filter, its order and its paging past 500 rows; E4's filters and order; E5's test order and `include=current`; the three board parameters required; the pointer rule (ties, older runs, a demoted pointer, a run set by hand, the hand-off on delete), E6's `changed`, replays and "no pointer yet"; annotation and board entries' `current`, `data`, lot and details; artifacts' fields, key order, generations, E8's order (newest first by `generated`, then its ties), filters (`from`/`to` and their bounds, `verdict`) and paging; delete, restore, replays, purge counts and `to_delete`, E14's benches, E16's operators (each once, deleted runs' included, by case folding), E17's readings of one test (each once in its first spelling with its first unit, deleted runs' included, by case folding, another test's never, `test` required). Each refusal is checked by its status, `kind`, `code` and envelope. Each case names the contract rules it checks (`@pytest.mark.rule`, the ids of the contract's coverage table). |
 | `test_server_contract_projects.py` | With plain HTTP, the rules the app's client would hide (it checks a request before sending it, sorts what it lists, ignores `missing`, takes parts it did not ask for, reads the kind and not the status): a project known only by its evidence; parts (exactly 1 MiB, over 1 MiB, two with one name, bytes not their name, a size not the file's, one no file names), a multipart answer's form (`multipart/mixed`, the json part first, each file an `attachment` named by its bytes), a blob the project holds referenced without its part, `have`, every `/read` twin against its `GET`, `409 missing_files`, blobs per project, an unknown `store_id`; P1's order, P3's releases, token and `410 gone`, P4's list without files, a `test.json` naming neither format, a project's `store_id`, a bundle's archive kept as sent, P5's `missing`, P9's moves, refusals and malformed changes, P10, a release's `missing` and `numbered_before_releases`, P11's names, test ids and drafts; the library's order, kinds and roles; S1–S4, a reference into the server's own file storage, nothing deleted in a declared one; B1's refusals and limits, B2's ranges; the import (§6.7). Each case checks the status, the `kind`, the `code` and the body. |
+| `test_server_contract_calls.py` | What a server offers beyond the core calls (§3.3, §6.1, §6.8), with plain HTTP: `/info`'s `calls` (optional calls only, each once) and each call it lists taken, each optional call it does not list `501 unsupported`, kind `invalid`; every change token `""` without P3 and none `""` with it; U1's users and their order; with U1, a run's `operator` and a release's `released_by` naming no user `409 unknown_operator`, kind `invalid`; `boards_registered`: E4 lists a registered board before its first run, a run on a board it does not list `409 unknown_board`, kind `invalid`. Against the reference server each case also starts one offering none of the optional calls (or registering a board), so both sides are checked. |
 | `test_server_load.py` | Off by default: many benches at once (see "Load and soak"). |
 
 Each store-then-read-back case also checks that the client made only the calls the contract
@@ -87,6 +88,11 @@ It prints the variables to set (below); set them in the first terminal and run t
 again. Only the cases needing the reference server itself are then skipped (see "Cases skipped
 against your server").
 
+To see what the kit makes of a server offering some optional calls only (§6.1), start it with
+`--calls`: `--calls none` offers the core calls alone, `--calls P3,E2,U1` those three besides.
+The cases needing a call it does not offer are then skipped, each naming the call (see "A
+server offering some optional calls only").
+
 ## Prepare your server
 
 Give the kit two logins on your server, each with a token:
@@ -96,7 +102,7 @@ Give the kit two logins on your server, each with a token:
 | a bench login | `bench` and `publisher` | every write but the managers' ones, publishing library items |
 | a manager login | `manager` | deleting, restoring and purging runs and artifacts |
 | an importer login (optional) | `importer` only | moving data in (§6.7), and uploading a project's file (B1); `importer` alone, so the cases can tell the import's writes from a bench's |
-| a mover login (optional) | `bench` and `importer` | the login the app moves a project's data in with: the right to move held beside `bench` (§3.5) |
+| a mover login (optional) | `bench` and `importer` | the login the app moves a project's data in with: the right to move held beside `bench` (§3.5); the cases moving data in through the app's own client (a release moved in, the evidence's moves) sign in with it |
 | a bench-only login (optional) | `bench` only, no `publisher` | telling a bench from a publisher (L3 with code, B1 for the library) |
 
 Use a manager login whose name is not `alice`: the cases type that name as the person deleting,
@@ -108,6 +114,47 @@ Your server's limits (`/info`, `limits`) must leave room for what the suites sen
 
 The server's clock must be within a few minutes of the clock of the PC running the kit.
 
+**If your server offers U1** (its users, §6.8), it refuses every run whose `operator`, and every
+release whose `released_by`, is none of its users. Make these users active on the test instance
+(their display names are free; the kit's runs and releases name them, in any case):
+`al`, `alice`, `ann`, `bob`, `carol`, `jdoe`, `kit`, `zoé`. The case
+`test_u1_lists_the_active_users_by_display_name_then_name` fails, naming those missing.
+
+**If your server registers its boards itself** (`/info` says `boards_registered: true`, §3.3),
+each board is registered or not, E4 lists exactly the registered ones, and a bench's run (E1),
+report or draft (E10) or board entry (E15) on a board that is not registered is refused `409
+unknown_board`; on a registered board it never is. With `PROCEDO_KIT_IMPORTER_TOKEN` set, the
+kit registers the boards of its own cases the way §3.3 lets anyone holding the importer role:
+when your server refuses such a bench's write `409 unknown_board`, the kit first reads E4. If E4
+lists that board, the case fails (a board E4 lists is registered: your server is broken), and the
+kit seeds nothing. Otherwise it imports a run on that board, its names exactly as the refused
+write sends them (an import is never refused for its board, and its board becomes registered),
+checks E4 now lists it, sends the refused write again, and the case goes on with that answer.
+Then, when your server offers E11 and E13, the manager's login deletes and purges the imported
+run. Only a write refused for its board gets its board registered so; an import (`"import":
+true`, whoever sends it) never does. The case fails, naming the board, the call, its status and
+its body, when the import, the delete or the purge is refused, or when E4 does not list the board
+once imported. It fails too, saying why, when the write sent again is refused `unknown_board`
+again, or a later write on a board the kit registered is; when it answers `already` (the refused
+push stored it: a refusal writes nothing); and when sending it again gets no answer.
+The imported run is incomplete, of the test id `ffffffff-ffff-4fff-bfff-ffffffffffff`, from the
+machine `0000feed`. The cases leave it out of exactly two kinds of reads: a board's results (E5,
+its test) and a search (E2, its rows); every other read sees it (E3 by its `run_id`, E4 lists
+its board, E14 lists `0000feed` as a bench). So every case runs whatever your server offers.
+**The importer's token is required for the full kit on such a server**: without it, every case
+writing on a board as a bench is skipped before it runs, naming `PROCEDO_KIT_IMPORTER_TOKEN`
+(most of the evidence cases). You register no board for these: the cases use boards and
+projects of their own. Run it against a test instance only: the boards it used stay registered,
+and without E11 and E13 the imported runs stay too ("What the kit leaves on your server").
+
+Register at least one board in one project yourself and name that project in
+`PROCEDO_KIT_BOARDS_PROJECT` (below): the cases check E4 lists its boards; a run, a report and a
+board entry on a board E4 does not list are refused, and E4 lists the same boards after; a run,
+a report and an entry on one it lists are taken (they stay on your server); an import is taken on
+any board, which E4 then lists and takes a bench's run on. Run the kit once more with your test
+instance not registering its boards, if it can, for the cases of the usual case (§3.3: `false`).
+`serve_reference.py --boards` shows such a server (it prints the project).
+
 ## Run it against your server
 
 Set these environment variables, then run `python -m pytest` from the kit's folder:
@@ -117,9 +164,10 @@ Set these environment variables, then run `python -m pytest` from the kit's fold
 | `PROCEDO_KIT_SERVER` | Your server's base address, as a user would type it in the app: `https://host/prefix/` (the trailing slash is optional). The kit adds `api/v1/`. |
 | `PROCEDO_KIT_BENCH_TOKEN` | The bench login's token. |
 | `PROCEDO_KIT_MANAGER_TOKEN` | The manager login's token. |
-| `PROCEDO_KIT_IMPORTER_TOKEN` | Optional: the importer login's token. Unset, the import's cases are skipped, saying so. |
-| `PROCEDO_KIT_MOVER_TOKEN` | Optional: the mover login's token. Unset, the case needing it is skipped, saying so. |
+| `PROCEDO_KIT_IMPORTER_TOKEN` | Optional: the importer login's token. Unset, the import's cases are skipped, saying so. **Required for the full kit on a server registering its boards**: the kit registers its boards with it; unset there, every case pushing a bench's run is skipped too. |
+| `PROCEDO_KIT_MOVER_TOKEN` | Optional: the mover login's token. Unset, the cases needing it are skipped, saying so. |
 | `PROCEDO_KIT_BENCH_ONLY_TOKEN` | Optional: the bench-only login's token. Unset, the two cases needing it are skipped, saying so. |
+| `PROCEDO_KIT_BOARDS_PROJECT` | Only for a server registering its boards: the `project_id` of a project holding at least one board registered on it. Unset there, the case needing it is skipped, saying so. |
 | `PROCEDO_KIT_CA_BUNDLE` | Optional: a PEM file of the CA that signed your server's certificate, when it is not one your system trusts. |
 
 ```
@@ -137,12 +185,32 @@ server on the loopback address (`http://127.0.0.1:...`), as the contract says (�
 Useful options: `-x` (stop at the first failure), `-k <words>` (only the cases whose name holds
 the words), `--lf` (only the cases that failed last time), `-v` (one line per case).
 
+### A server offering some optional calls only
+
+Every server takes the core calls (contract §6.1: `/info`, S1, P1, P2, P2b, P7, P9, P10, P11, E1,
+E3, E4, E5, E7, E8, E9, E10, B1, B2); every other call is optional. Your `/info` lists those you
+offer in `calls`, and every other one answers `501 unsupported`, kind `invalid`. The kit reads
+that list before any case runs:
+
+- `test_server_contract_calls.py` checks each call you list is taken, each core call answers
+  (never `501`) and each optional call you do not list answers `501`;
+- a case making an optional call you do not list is **skipped** before it runs, the reason
+  naming the call (`-rs` prints the reasons). `suites/kit_calls.json` lists the optional calls
+  each case makes (recorded against the reference server offering every call); a case that
+  makes an optional call only when your server lists it is not in that list and runs;
+- a case that runs and fails, fails: nothing is skipped after it ran;
+- every rule of the core calls keeps a case making core calls only, so every core rule is
+  checked on your server whatever it offers.
+
+Without P3, every change token you answer is `""` (the app then reads the whole project at each
+sync); with it, none is. Without U1 or S2–S4, nothing else changes.
+
 ## Slow checks, load and soak (off by default)
 
 | Variable | What it switches on |
 |---|---|
 | `PROCEDO_KIT_SLOW=1` | The case for `408 request_timeout` (contract §4.3): it sends half a request's body, then stalls, and expects your server to give up with `408`, code `request_timeout`, kind `timeout`, its headers and the envelope, nothing written. It waits up to `PROCEDO_KIT_SLOW_WAIT` seconds (300 by default) for that answer; set it above your server's (and your proxy's) body timeout. A proxy answering `408` itself fails the case: the answer must carry `X-Bench-Store`. |
-| `PROCEDO_KIT_LOAD=1` | The load test, `test_server_load.py`: `PROCEDO_KIT_LOAD_BENCHES` benches at once (20 by default), each doing what a real bench does, a few rounds each: push a run with its record and a picture, upload a report, annotate the run, set the board's lot, read the run and the report back. Setting `PROCEDO_KIT_LOAD_BENCHES` or `PROCEDO_KIT_LOAD_MINUTES` switches it on too. |
+| `PROCEDO_KIT_LOAD=1` | The load test, `test_server_load.py`: `PROCEDO_KIT_LOAD_BENCHES` benches at once (20 by default), each doing what a real bench does, a few rounds each: push a run with its record and a picture, upload a report, annotate the run, set the board's lot (when your server offers E15), read the run and the report back; on a server registering its boards, only with `PROCEDO_KIT_IMPORTER_TOKEN` set. Setting `PROCEDO_KIT_LOAD_BENCHES` or `PROCEDO_KIT_LOAD_MINUTES` switches it on too. |
 | `PROCEDO_KIT_LOAD_MINUTES` | Makes the load a **soak** run: the benches go on, round after round, for that many minutes. |
 
 The load test **fails** when anything is lost, refused or read back different (a field, a byte,
@@ -174,7 +242,15 @@ server afterwards:
   the PC running it (`…/declared-<8 hex digits>`, §7.3: the server must not delete there);
 - with `kit_data.py fill`, a project named `Dataset <8 hex digits>` and the library item
   `kit-<8 hex digits>-dataset`;
-- benches whose `machine_id` is new for each run (E14).
+- benches whose `machine_id` is new for each run (E14);
+- on a server registering its boards (§3.3), with `PROCEDO_KIT_IMPORTER_TOKEN` set: every board
+  a case pushed a run on stays registered (E4 lists it, in that case's project), and so does
+  the run the kit imported to register it. That run is always recognisable: test id
+  `ffffffff-ffff-4fff-bfff-ffffffffffff`, test name `kit board registration`, `machine_id`
+  `0000feed` (also listed as a bench by E14), started `2000-01-01T00:00:00Z`, a `run_id`
+  beginning `2000-01-01T00-00-00Z_`, incomplete, with no file. When your server offers E11 and
+  E13 the manager's login deletes and purges it at once, so only its `run_id` stays (E13 keeps a
+  purged run's id); otherwise it stays, one per board, and E2 and E5 list it.
 
 Run it against a test instance, not a server people use.
 
@@ -210,8 +286,10 @@ case against `serve_reference.py`, and compare the two servers' answers to the s
 | `test_server_contract_projects.py` `test_a_damaged_blob_is_missing_and_the_bytes_sent_again_replace_it` | It damages a blob on the reference server's own disk. |
 | `test_server_contract_projects.py` `test_b1_is_held_to_max_file_bytes_never_to_max_upload_bytes` | It needs the server's limits set small. |
 | `test_server_contract_projects.py`, the cases of the import (§6.7) and `test_b1_takes_a_projects_bytes_…` | Only when `PROCEDO_KIT_IMPORTER_TOKEN` is not set. |
+| Every case pushing a bench's run | Only on a server registering its boards (§3.3) when `PROCEDO_KIT_IMPORTER_TOKEN` is not set: the kit registers its boards with it. |
 | `test_server_contract_projects.py` `test_only_a_publisher_publishes_an_item_holding_code`, `test_b1_takes_a_projects_bytes_…` | Only when `PROCEDO_KIT_BENCH_ONLY_TOKEN` is not set. |
-| `test_server_contract_conventions.py`: the cases sending a file as a part (gzip whole multipart, `416`, `422`, a part over 1 MiB, `missing_files`, a library version) | They need a storage of backend `api` (`GET /storages`); a server keeping no byte itself skips them, saying so. |
+| `test_project_conformance.py` `a_release_moved_in_lands_as_it_was` | Only when `PROCEDO_KIT_MOVER_TOKEN` is not set: a release moved in (P10 with `"import": true`) needs the importer role beside `bench`. |
+| `test_server_contract_conventions.py`: the cases sending a file as a part (no part of an answer encoded, `416`, `422`, a part over 1 MiB, `missing_files`, a library version) | They need a storage of backend `api` (`GET /storages`); a server keeping no byte itself skips them, saying so. |
 | `test_server_contract_conventions.py` `test_a_body_that_stops_arriving_is_408_request_timeout` | Only when `PROCEDO_KIT_SLOW=1` is not set (slow: it waits for your server to give up). |
 | `test_server_load.py` | Only when `PROCEDO_KIT_LOAD=1` is not set. |
 | `test_server_contract_projects.py` `test_a_reference_into_the_servers_own_file_storage_is_checked` | When your server lists no storage of its own but `api` (§7.1 is then not yours). With one, the case checks a reference to bytes not there (`409 missing_files`), and, when the PC running the kit can write that storage's folder (a `filesystem` storage marked for your server), puts them there and checks the write is then taken. |
@@ -244,7 +322,10 @@ The kit cannot provoke or observe these; check them with `curl` against your dep
 5. **`X-Bench-Store` from the API process**, not added by a proxy: stop the API process behind
    your proxy; the proxy's own error must not carry `X-Bench-Store` (§3.2).
 6. **Errors from your own rules** (quota, size, rate): each answers a status of §4.3 with the
-   envelope and a `kind` (§4, §8.1 rule 4). The suites see only the contract's own refusals.
+   envelope and a `kind` (§4, §8.1 rule 4). One entry refused by a rule of your own (a project
+   or test you do not know, say) is `409`, any code of yours, kind `invalid`, so the app's
+   outbox sets that entry aside and goes on (§4.3). The suites see only the contract's own
+   refusals.
 7. **`5xx` answers**: carry `X-Bench-Store`, `X-Request-Id`, `Date` and the envelope (§3.2,
    §4.1), like every other answer.
 8. **The path prefix in your real deployment.** Run the kit with `PROCEDO_KIT_SERVER` set to the
@@ -317,6 +398,9 @@ The kit cannot provoke or observe these; check them with `curl` against your dep
     `test_a_body_over_its_limit_is_413_before_it_is_sent` and
     `test_a_body_over_its_limit_is_413_before_anything_else_is_looked_at[expect-100]` then
     fail: run them against the API process directly.
+13. **The manager's calls listed only with a manager** (§6.1, §3.5). Your `/info` lists E11,
+    E12 and E13 in `calls` only when some login can hold the role `manager`; a server where
+    nobody may delete lists none of them. The kit cannot see who may hold a role.
 
 ## Backups and upgrades: `kit_data.py fill` and `verify`
 
@@ -412,9 +496,9 @@ publish, import), nothing more.
 
 | Path | What it is |
 |---|---|
-| `suites/` | The cases, the module that picks the server (`server_target.py`), the contract's twin (`procedo_api.openapi.yaml`) with the module reading it (`openapi_twin.py`, standard library only), and the reference server. |
+| `suites/` | The cases, the module that picks the server (`server_target.py`), the contract's twin (`procedo_api.openapi.yaml`) with the module reading it (`openapi_twin.py`, standard library only), the optional calls each case makes (`kit_calls.json`), and the reference server. |
 | `vendor/procedo/` | The Procedo app's API client and the modules it imports, as the app ships them. The kit imports nothing else but pytest and the Python standard library. |
 | `conftest.py`, `pytest.ini` | How pytest finds and runs the cases; each case runs in a sandbox of its own (the client's per-user folders point into pytest's temporary folder). |
-| `serve_reference.py` | The reference server on its own, behind a path prefix (`--body-timeout`: the seconds a stalled body waits before `408`). |
+| `serve_reference.py` | The reference server on its own, behind a path prefix (`--body-timeout`: the seconds a stalled body waits before `408`; `--calls`: the optional calls it offers; `--boards`: it registers its boards). |
 | `kit_data.py` | The data set's `fill` and `verify`, for backups and upgrades. |
 | `VERSION` | The Procedo version and the commit the kit was built from. |

@@ -12,7 +12,7 @@ import json
 import secrets
 import threading
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -25,6 +25,7 @@ from . import (
     changes,
     faults,
     library,
+    offer,
     pointers,
     project_tests,
     projects,
@@ -62,6 +63,8 @@ def info(call: Call) -> Answer:
                 "max_file_bytes": state.max_file_bytes,
                 "retention_days": state.retention_days,
             },
+            "calls": offer.listed(state.calls),
+            "boards_registered": state.registered != faults.on("3.3.info-boards-registered"),
             "user": {"name": user.name, "roles": sorted(user.roles)}
             | (
                 {"token_expires": "2001-01-01T00:00:00Z"}
@@ -70,6 +73,11 @@ def info(call: Call) -> Answer:
             ),
         }
     )
+
+
+def users(call: Call) -> Answer:
+    """U1 ``GET /users``: the server's active users (§6.8)."""
+    return Answer(offer.users_answer(call.state.people or []))
 
 
 @dataclass(frozen=True)
@@ -86,6 +94,16 @@ class Route:
     #: login's roles and before what the call names (§2.11, §2.13); None: the call checks its
     #: own (E2, E8: an undefined one is ``unsupported_filter``).
     query: frozenset[str] | None = frozenset()
+    #: The call's id in §6.1 (``info`` for discovery): an optional one this server does not
+    #: offer answers ``501`` (``offer``). P2 with ``since`` is P3, P4 with ``names`` is P5.
+    call: str = ""
+
+    def call_id(self, query: Query) -> str:
+        if self.call == "P2" and query.has("since"):
+            return "P3"
+        if self.call == "P4" and query.has("names"):
+            return "P5"
+        return self.call
 
 
 P = ("projects", "{project_id}")
@@ -96,55 +114,87 @@ HAVE = frozenset({"have"})
 BOARD = frozenset({"part_number", "board_revision"})
 SEARCH = None  # E2 and E8 check their own parameters: an undefined one is unsupported_filter
 ROUTES = (
-    Route("GET", ("info",), info, ANY),
-    Route("GET", ("projects",), projects.list_projects, ANY),
-    Route("POST", ("projects",), projects.create_project, BENCH, multipart=True),
-    Route("GET", P, projects.read_project, ANY, query=frozenset({"have", "since"})),
-    Route("POST", (*P, "read"), projects.read_project, ANY),
-    Route("GET", (*P, "tests"), project_tests.list_tests, ANY, query=frozenset({"names", "have"})),
-    Route("POST", (*P, "tests", "read"), project_tests.read_tests, ANY),
-    Route("GET", T, project_tests.get_test, ANY, query=HAVE),
-    Route("POST", (*T, "read"), project_tests.get_test, ANY),
-    Route("GET", R, releases.list_releases, ANY),
-    Route("POST", R, releases.release, BENCH, multipart=True, importable=True),
-    Route("GET", (*R, "{version}"), releases.get_release, ANY, query=HAVE),
-    Route("POST", (*R, "{version}", "read"), releases.get_release, ANY),
-    Route("GET", ("library",), library.list_library, ANY, query=frozenset({"kind"})),
-    Route("POST", ("library", "{kind}"), library.publish, PUBLISH, multipart=True),
-    Route("GET", LIB, library.get_item, ANY, query=HAVE),
-    Route("POST", (*LIB, "read"), library.get_item, ANY),
-    Route("GET", ("storages",), storages.list_storages, ANY),
-    Route("POST", ("storages",), storages.declare_storage, BENCH),
-    Route("GET", ("storages", "{store_id}", "to_delete"), storages.to_delete, BENCH),
-    Route("POST", ("storages", "{store_id}", "deleted"), storages.deleted, BENCH),
-    Route("GET", BLOB, blob_calls.download, ANY),
-    Route("POST", BLOB, blob_calls.upload, UPLOAD, raw=True),
-    Route("GET", ("benches",), storages.list_benches, ANY),
-    Route("GET", ("runs",), search.search_runs, ANY, query=SEARCH),
-    Route("POST", (*P, "changes"), changes.push_changes, BENCH, multipart=True, held_first=True),
-    Route("POST", (*P, "runs"), runs.push_run, BENCH, multipart=True, importable=True),
-    Route("GET", (*P, "runs", "{run_id}"), runs.read_run, ANY, query=HAVE),
-    Route("POST", (*P, "runs", "{run_id}", "read"), runs.read_run, ANY),
+    Route("GET", ("info",), info, ANY, call="info"),
+    Route("GET", ("users",), users, ANY, call="U1"),
+    Route("GET", ("projects",), projects.list_projects, ANY, call="P1"),
+    Route("POST", ("projects",), projects.create_project, BENCH, multipart=True, call="P11"),
+    Route("GET", P, projects.read_project, ANY, query=frozenset({"have", "since"}), call="P2"),
+    Route("POST", (*P, "read"), projects.read_project, ANY, call="P2b"),
+    Route(
+        "GET",
+        (*P, "tests"),
+        project_tests.list_tests,
+        ANY,
+        query=frozenset({"names", "have"}),
+        call="P4",
+    ),
+    Route("POST", (*P, "tests", "read"), project_tests.read_tests, ANY, call="P6"),
+    Route("GET", T, project_tests.get_test, ANY, query=HAVE, call="P7"),
+    Route("POST", (*T, "read"), project_tests.get_test, ANY, call="P7"),
+    Route("GET", R, releases.list_releases, ANY, call="P8"),
+    Route("POST", R, releases.release, BENCH, multipart=True, importable=True, call="P10"),
+    Route("GET", (*R, "{version}"), releases.get_release, ANY, query=HAVE, call="P8b"),
+    Route("POST", (*R, "{version}", "read"), releases.get_release, ANY, call="P8b"),
+    Route("GET", ("library",), library.list_library, ANY, query=frozenset({"kind"}), call="L1"),
+    Route("POST", ("library", "{kind}"), library.publish, PUBLISH, multipart=True, call="L3"),
+    Route("GET", LIB, library.get_item, ANY, query=HAVE, call="L2"),
+    Route("POST", (*LIB, "read"), library.get_item, ANY, call="L2"),
+    Route("GET", ("storages",), storages.list_storages, ANY, call="S1"),
+    Route("POST", ("storages",), storages.declare_storage, BENCH, call="S2"),
+    Route("GET", ("storages", "{store_id}", "to_delete"), storages.to_delete, BENCH, call="S3"),
+    Route("POST", ("storages", "{store_id}", "deleted"), storages.deleted, BENCH, call="S4"),
+    Route("GET", BLOB, blob_calls.download, ANY, call="B2"),
+    Route("POST", BLOB, blob_calls.upload, UPLOAD, raw=True, call="B1"),
+    Route("GET", ("benches",), storages.list_benches, ANY, call="E14"),
+    Route("GET", ("runs",), search.search_runs, ANY, query=SEARCH, call="E2"),
+    Route(
+        "POST",
+        (*P, "changes"),
+        changes.push_changes,
+        BENCH,
+        multipart=True,
+        held_first=True,
+        call="P9",
+    ),
+    Route("POST", (*P, "runs"), runs.push_run, BENCH, multipart=True, importable=True, call="E1"),
+    Route("GET", (*P, "runs", "{run_id}"), runs.read_run, ANY, query=HAVE, call="E3"),
+    Route("POST", (*P, "runs", "{run_id}", "read"), runs.read_run, ANY, call="E3"),
     Route(
         "POST",
         (*P, "runs", "{run_id}", "annotation"),
         runs.save_annotation,
         BENCH,
         importable=True,
+        call="E7",
     ),
-    Route("POST", (*P, "runs", "{run_id}", "delete"), runs.delete_run, OWN),
-    Route("POST", (*P, "runs", "{run_id}", "restore"), runs.restore_run, OWN),
-    Route("GET", (*P, "boards"), boards.list_boards, ANY, query=BOARD),
-    Route("GET", (*P, "operators"), search.list_operators, ANY),
-    Route("GET", (*P, "readings"), search.list_readings, ANY, query=frozenset({"test"})),
+    Route("POST", (*P, "runs", "{run_id}", "delete"), runs.delete_run, OWN, call="E11"),
+    Route("POST", (*P, "runs", "{run_id}", "restore"), runs.restore_run, OWN, call="E11"),
+    Route("GET", (*P, "boards"), boards.list_boards, ANY, query=BOARD, call="E4"),
+    Route("GET", (*P, "operators"), search.list_operators, ANY, call="E16"),
+    Route(
+        "GET",
+        (*P, "readings"),
+        search.list_readings,
+        ANY,
+        query=frozenset({"test"}),
+        call="E17",
+    ),
     Route(
         "GET",
         (*P, "boards", "{serial}"),
         boards.board_results,
         ANY,
         query=BOARD | {"include", "have"},
+        call="E5",
     ),
-    Route("POST", (*P, "boards", "{serial}", "read"), boards.board_results, ANY, query=BOARD),
+    Route(
+        "POST",
+        (*P, "boards", "{serial}", "read"),
+        boards.board_results,
+        ANY,
+        query=BOARD,
+        call="E5",
+    ),
     Route(
         "POST",
         (*P, "boards", "{serial}", "tests", "{test_id}", "current"),
@@ -152,6 +202,7 @@ ROUTES = (
         BENCH,
         importable=True,
         query=BOARD,
+        call="E6",
     ),
     Route(
         "POST",
@@ -160,21 +211,29 @@ ROUTES = (
         BENCH,
         importable=True,
         query=BOARD,
+        call="E15",
     ),
-    Route("GET", (*P, "artifacts"), artifacts.list_artifacts, ANY, query=SEARCH),
+    Route("GET", (*P, "artifacts"), artifacts.list_artifacts, ANY, query=SEARCH, call="E8"),
     Route(
-        "POST", (*P, "artifacts"), artifacts.push_artifact, BENCH, multipart=True, importable=True
+        "POST",
+        (*P, "artifacts"),
+        artifacts.push_artifact,
+        BENCH,
+        multipart=True,
+        importable=True,
+        call="E10",
     ),
-    Route("POST", (*P, "artifacts", "delete"), artifacts.delete_artifact, OWN),
-    Route("POST", (*P, "artifacts", "restore"), artifacts.restore_artifact, OWN),
+    Route("POST", (*P, "artifacts", "delete"), artifacts.delete_artifact, OWN, call="E12"),
+    Route("POST", (*P, "artifacts", "restore"), artifacts.restore_artifact, OWN, call="E12"),
     Route(
         "GET",
         (*P, "artifacts", "{kind}", "{name}"),
         artifacts.get_artifact,
         ANY,
         query=BOARD | {"serial", "generation", "have"},
+        call="E9",
     ),
-    Route("POST", (*P, "purge"), purge.purge, OWN),
+    Route("POST", (*P, "purge"), purge.purge, OWN, call="E13"),
 )
 
 
@@ -250,7 +309,7 @@ def _check_role(route: Route, call: Call) -> None:
     """A write needs a role that allows it: the call's, or the importer's with ``"import":
     true`` where the call takes an import (§5.2). Else ``403 forbidden``."""
     roles = call.user.roles
-    if faults.on("3.5.every-login-reads") and route.roles is ANY and route.pattern != ("info",):
+    if faults.on("3.5.every-login-reads") and route.call == "E8":  # a read needing a role
         if "bench" not in roles:
             raise forbidden("This login may not read.")
     if route.roles in (ANY, OWN) or roles & route.roles:  # type: ignore[operator]
@@ -376,13 +435,17 @@ class _Handler(BaseHTTPRequestHandler):
                     Query(_query_pairs(urlsplit(self.path).query)).only(early.query)
             user = self._authenticate(segments)
             route, params = _match(self.command, segments)
+            query = Query(_query_pairs(urlsplit(self.path).query))
+            offer.refuse_unoffered(state.calls, route.call_id(query))  # §6.1: 501, as the call
+            if route.call != "E1":  # a run: push_run notes it when a bench's (not an import)
+                offer.note(route.call_id(query))
             _check_params(params)
             call = Call(
                 state=state,
                 user=user,
                 method=self.command,
                 params=params,
-                query=Query(_query_pairs(urlsplit(self.path).query)),
+                query=query,
                 headers={name.lower(): value for name, value in self.headers.items()},
                 wire=self._wire,
             )
@@ -461,8 +524,9 @@ class _Handler(BaseHTTPRequestHandler):
             )
         self._wire = data
         multipart = self.headers.get("Content-Type", "").lower().startswith("multipart/")
-        if multipart and faults.on("2.12.gzip-whole-multipart"):
-            return data
+        if multipart and self.headers.get("Content-Encoding"):
+            # §2.12: a multipart body travels plain; this server refuses one that is not
+            raise bad_request("A multipart body is sent plain, with no Content-Encoding.")
         if self.headers.get("Content-Encoding", "").strip().lower() == "gzip":
             data = gunzip(data, "body")
         return data
@@ -712,6 +776,9 @@ def start(
     own_storage: str | Path | None = None,
     reaches: tuple[str | Path, ...] = (),
     body_timeout: float = 60.0,
+    calls: Iterable[str] | None = None,
+    users: list[dict] | None = None,
+    boards: dict[str, list[dict]] | None = None,
 ) -> tuple[str, ReferenceServer]:
     """Serve the JSON API on 127.0.0.1, a free port. ``tokens``: ``{token: [roles]}``.
 
@@ -721,6 +788,13 @@ def start(
     ``own_storage``: a folder the server keeps as an own ``filesystem`` storage besides ``api``
     (§7.1); ``reaches``: the folders it mounts, so a declared ``filesystem`` storage inside one
     is reached (§7.3); ``body_timeout``: the seconds a body may stall before ``408``.
+    ``calls``: the optional calls it offers (§6.1, ``offer.OPTIONAL``), the others answering
+    ``501``; None: every one, U1 only with ``users``. ``users``: the users U1 lists (§6.8),
+    each ``{"name", "display_name"}``; with U1 offered, a run's operator and a release's
+    ``released_by`` must be one of them. ``boards``: the boards its administrator registered,
+    ``{project_id: [{"serial", "part_number"?, "board_revision"?}]}``: given, ``/info`` says
+    ``boards_registered: true``, E4 lists them before any run and E1 refuses a run on any other
+    (``409 unknown_board``); None (the default), any serial run becomes a board (§3.3).
     """
     state = State(
         Path(tmp_path),
@@ -733,6 +807,9 @@ def start(
         own_storage=Path(own_storage) if own_storage is not None else None,
         reaches=tuple(Path(folder) for folder in reaches),
         body_timeout=body_timeout,
+        calls=calls,
+        people=users,
+        boards=boards,
     )
     server = ReferenceServer(state)
     server.thread = threading.Thread(

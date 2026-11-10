@@ -9,7 +9,8 @@ rules is a correct one.
 > it refuses, and what the app reads back later. How the server gets there inside is free. The
 > reference server of the conformance kit (§8) keeps everything in memory: it is an example to
 > compare answers against, not a design to copy. Section 7 (file storages the app writes to itself)
-> matters only to a server that offers them, except 7.3.
+> matters only to a server that offers them. Many calls are optional (6.1): a server lists in
+> `/info` those it offers, and answers the others `501 unsupported`.
 
 Levels: **MUST** means the app cannot work without it. **SHOULD** means one feature degrades
 without it. Every rule stated without a level is a MUST.
@@ -84,7 +85,9 @@ Everything below follows from these.
    manager deletes it, softly, and can restore it.
 8. **Every write can be replayed.** Benches queue writes offline and send them later. The same
    request sent again gives the same result and never makes a second copy.
-9. **A change token per project.** `?since=<token>` answers only what changed since.
+9. **A change token per project.** `?since=<token>` answers only what changed since (P3). P3 is
+   optional: a server without it answers an empty token, and the app reads the whole project
+   each time (P2).
 10. **Paging only where a search is unbounded** (runs across boards and dates, artifacts across
     boards), with an opaque cursor.
 11. **A missing file never hides what refers to it.** A run whose picture is gone still opens;
@@ -224,10 +227,12 @@ unsupported_filter` on the two searches (E2, E8), `400 bad_request` on every oth
 ### 2.12 Compression
 
 - <a id="rule-2.12.gzip-json-body"></a>A plain JSON body is sent with `Content-Encoding: gzip` when the other side accepts it.
-- <a id="rule-2.12.gzip-json-part"></a>In a multipart body, the JSON part may carry its own `Content-Encoding: gzip` header. File
-  parts never do.
-- <a id="rule-2.12.gzip-whole-multipart"></a>A server also accepts a whole request body, multipart included, sent with
-  `Content-Encoding: gzip`, and undoes it first.
+- <a id="rule-2.12.plain-json-part"></a>In a multipart body, up or down, no part carries a `Content-Encoding`: the `json` part
+  is plain JSON, a file part the file's bytes. Many multipart parsers drop a part's headers, so a
+  gzipped part would be unreadable to them. A server may ignore a request part's
+  `Content-Encoding` (reading its bytes as they are) or refuse the request, `400 bad_request`.
+- A multipart request body is sent plain as a whole too, never with a `Content-Encoding`. A
+  server need not accept one that carries it: it may refuse the request, `400 bad_request`.
 - <a id="rule-2.12.no-gzip-multipart-answer"></a>A server never compresses a whole multipart answer.
 - <a id="rule-2.12.digest-decoded"></a>Any digest of the JSON (the replay check of E1) is of its bytes with every encoding undone.
 
@@ -242,7 +247,8 @@ in this order:
    limit is `413`, even when it names a project or a storage the server does not hold.
 3. <a id="rule-2.13.token-first"></a>**The token**: `401` (3.4). A request without a valid token is `401`, whatever else is
    wrong with it (an undefined query parameter included).
-4. **The call**: `405` / `501 unsupported` for a method or a call the server does not take (4.3).
+4. **The call**: `405` / `501 unsupported` for a method or a call the server does not take (4.3),
+   an optional call it does not list in `/info` included (6.1).
 5. <a id="rule-2.13.parameters-before-item"></a>**The request's form**: `400 bad_request` (`unsupported_filter` on E2 and E8) for a
    malformed id in the path (2.5), a query parameter the call does not define (2.11) or
    gives twice, E17's `test` missing or empty, a request `Content-Type` the call does not take,
@@ -300,6 +306,7 @@ Authorization: Bearer <token>
 HTTP/1.1 200 OK   Date: Thu, 05 Nov 2026 12:00:00 GMT   X-Bench-Store: v1   X-Request-Id: 7c1f…
 {"server": "bench-store-01", "api_versions": ["1"], "server_time": "2026-11-05T12:00:00.317Z",
  "limits": {"max_upload_bytes": 67108864, "max_file_bytes": 268435456, "retention_days": 90},
+ "calls": ["P3", "E2", "E6", "E15", "U1"], "boards_registered": false,
  "user": {"name": "jdoe", "roles": ["bench"], "token_expires": "2026-12-31T00:00:00Z"}}
 ```
 
@@ -313,6 +320,8 @@ HTTP/1.1 200 OK   Date: Thu, 05 Nov 2026 12:00:00 GMT   X-Bench-Store: v1   X-Re
 | `limits.max_upload_bytes` | The largest JSON request, its parts included (6.6). Integer ≥ 1. | MUST |
 | `limits.max_file_bytes` | The largest file sent alone (B1). Integer ≥ 1. The app checks a file against it before sending. | MUST |
 | `limits.retention_days` | How long a deleted run or artifact is kept before a purge removes it, in days. 90 unless the server's administrator set another. Integer ≥ 1. | MUST |
+| <a id="rule-3.3.info-calls"></a>`calls` | The **optional** calls this server offers, by their ids in 6.1 (`"P3"`, `"E2"`, `"U1"`, …): each at most once, in any order, `[]` when it offers none. A core call is never listed: every server takes them all. An optional call not listed answers `501 unsupported` (6.1). | MUST |
+| <a id="rule-3.3.info-boards-registered"></a>`boards_registered` | Whether the server **registers its boards itself**. `false` (the usual case): any serial a bench runs becomes a board with its first run (E1). `true`: someone adds the boards on the server before they are tested. Each board of a project is then registered or not, and <a id="rule-E4.registered-listed"></a>E4 lists exactly the registered boards, no more, no less, one no run was pushed to yet included. A bench's write naming a board that is not registered is refused `409 unknown_board`, kind `invalid` (4.4), nothing written: <a id="rule-E1.unknown-board"></a>a run (E1), <a id="rule-E10.unknown-board"></a>a report or a draft (E10), <a id="rule-E15.unknown-board"></a>a board entry (E15); the outbox sets it aside. <a id="rule-3.3.listed-taken"></a>On a registered board none of them is ever refused so: a board E4 lists and a bench's write refuses `unknown_board` is a broken server. The app then lets a bench pick a board only from E4's list. <a id="rule-E1.unknown-board-exempt"></a>Not refused so: an imported run (`"import": true`, 6.7), <a id="rule-3.3.import-any-call"></a>and an imported report, draft or board entry alike (E10, E15), <a id="rule-3.3.import-registers"></a>whose board, when new, becomes registered (E4 lists it from then on, and a bench's write on it is taken), the one way a board is registered through these calls; a replay of a run or a report already stored. | MUST |
 | `user.name` | The login's name. | MUST |
 | <a id="rule-3.3.info-roles"></a>`user.roles` | The login's roles, from `bench`, `publisher`, `importer`, `manager`, `reader` (3.5). | MUST |
 | <a id="rule-3.3.info-token-expires"></a>`user.token_expires` | When the token stops working (time). The app warns within 14 days of it. | SHOULD |
@@ -328,8 +337,8 @@ credential. A malformed, expired or revoked token gets the same answer with
 <a id="rule-3.3.info-403"></a>A valid token that may not use this server: `403`, never `401`.
 
 `/info` doubles as the credentials test in the app's settings, and tells the app the login's
-roles so it can grey out a button instead of failing in front of an operator. Whether a write is
-allowed is still proved by the write itself.
+roles, the server's optional calls and whether it registers its boards, so it can grey out a button instead of failing in front of
+an operator. Whether a write is allowed is still proved by the write itself.
 
 ### 3.4 Authentication
 
@@ -359,7 +368,7 @@ the data itself (`machine_id`), never by the login.
 | `bench` | Every read. P9, P10, P11. E1, E6, E7, E10, E15. L3 for an item with no code. S2, S3, S4. B1. |
 | `publisher` | Every read. L3 for any item, code included. B1 for owner `library`. |
 | <a id="rule-import.never-restore-purge"></a>`importer` | Every read. With `"import": true` in the body: E1, E6, E7, E10, E15, P10, and the deletes of E11 and E12, keeping the server-set fields sent (6.7). B1 for a project's file. **Never** a restore or a purge. The right to move data in: the administrator gives it to the account that does the move, beside its other roles, and takes it back afterwards or not, as they choose. |
-| <a id="rule-3.5.manager-only-no-push"></a>`manager` | Every read. E11, E12, E13. A login holding only this role cannot push a run. |
+| <a id="rule-3.5.manager-only-no-push"></a>`manager` | Every read. E11, E12, E13. A login holding only this role cannot push a run. A server where no login can hold it does not offer E11–E13 (6.1). |
 | `reader` | Every read. |
 
 - <a id="rule-3.5.write-needs-role"></a>A write needs a role that allows it, else `403 forbidden`.
@@ -386,7 +395,8 @@ the data itself (`machine_id`), never by the login.
 | <a id="rule-3.6.length-required"></a>`Content-Length` | Required on a request with a body. A chunked body with no declared length: `411 length_required`. | MUST |
 | <a id="rule-3.6.too-large-before-body"></a>Size limits | Enforced with `413 too_large` **before** the body is read: `limits.max_upload_bytes` for a JSON request (parts included), `limits.max_file_bytes` for a file sent alone (B1). `Expect: 100-continue` is honoured, so a 413 does not cost the body. | MUST |
 | Range | B2 only: `Accept-Ranges: bytes`, `206`, `Content-Range`, `416`. A JSON request or answer has no `Range` and no resumable form. | MUST |
-| Compression | `Content-Encoding: gzip` on JSON, both ways (2.12). Never on a file's bytes. | SHOULD |
+| Compression | `Content-Encoding: gzip` on a plain JSON body, both ways (2.12). | SHOULD |
+| No compression | Never on a multipart body, as a whole or a part, up or down (2.12); never on a file's bytes (B1, B2). | MUST |
 
 ### 3.7 What the app depends on
 
@@ -462,11 +472,12 @@ and `X-Request-Id`:
 | <a id="rule-4.3.401-auth"></a>401 | `invalid_token`, `expired_token` | `auth` | With `WWW-Authenticate` as in 3.4. |
 | <a id="rule-4.3.403-denied"></a>403 | `forbidden`, `not_a_manager`, or any code for the server's own rules | `denied` | A valid token without the right. **Never for a bad token.** |
 | <a id="rule-4.3.404-signed"></a>404 | `not_found` | `not_found` | Only **with** `X-Bench-Store`; without it the app reads `unreachable`. |
-| <a id="rule-4.3.405-501"></a>405 / 501 | `unsupported` | `invalid` | A method or call this server does not take; never retried. |
+| <a id="rule-4.3.405-501"></a>405 / 501 | `unsupported` | `invalid` | A method or call this server does not take, an optional call it does not list in `/info` included (6.1); never retried. |
 | <a id="rule-4.3.408"></a>408 | `request_timeout` | `timeout` | |
-| <a id="rule-4.3.409-invalid"></a>409 | `missing_files`, `changed`, `same_as_release`, `deleted`, `version_exists`, `exists` | **`invalid`** | One bad queue entry: `invalid` sets it aside and the queue keeps flushing. (`denied` here would stall every bench's uploads behind it.) |
+| <a id="rule-4.3.409-invalid"></a>409 | `missing_files`, `changed`, `same_as_release`, `deleted`, `version_exists`, `exists`, `unknown_operator`, `unknown_board` | **`invalid`** | One bad queue entry: `invalid` sets it aside and the queue keeps flushing. (`denied` here would stall every bench's uploads behind it.) |
+| <a id="rule-4.3.409-own-codes"></a>409 | any other code, for the server's own rule on one entry (`unknown_project`, `unknown_test`, …) | **`invalid`** | The server refuses this one entry by a rule of its own (a project or test it does not know, say): the outbox sets that entry aside and carries on with the others, as for the codes above. |
 | <a id="rule-4.3.409-run-conflict"></a>409 | `run_conflict` | `corrupt` | |
-| <a id="rule-4.3.410-gone"></a>410 | `gone` | `not_found` | P3's `since` token cannot be answered from; the app opens the project in full. |
+| <a id="rule-4.3.410-gone"></a>410 | `gone` | `not_found` | P3's `since` token cannot be answered from; the app opens the project in full. A server without P3 never answers it: its tokens are `""`, and the app sends no `since` (P2). |
 | 411 | `length_required` | `invalid` | A body with no `Content-Length`. |
 | 413 | `too_large` | `invalid` | Over `max_upload_bytes` or `max_file_bytes`. |
 | <a id="rule-4.3.416"></a>416 | `range_not_satisfiable` | `corrupt` | B2: the copy held is wrong; the app drops it and downloads whole. |
@@ -491,6 +502,9 @@ on 429, 503 and 507.
 | 409 | `deleted` | `invalid` | An artifact push to a name a manager deleted (not a replay); a push of a run a manager purged; an annotation entry for a run a manager deleted. | | Sets the entry aside, says why. |
 | 409 | `version_exists` | `invalid` | L3: a library version held with other content. | `content_sha256`: the stored one | "Publish it under a new version." |
 | 409 | `exists` | `invalid` | P11: a project with that `project_id` or name is held. L3: an item differing from a held one only by case. | | Says it is on the server already. |
+| 409 | `unknown_operator` | `invalid` | A server listing U1: E1's `operator` or P10's `released_by` is none of its users (6.8). Nothing written. | | Sets the entry aside, says the name is none of the server's users. |
+| 409 | `unknown_board` | `invalid` | E1, E10, E15 (not an import) on a server whose `/info` says `boards_registered: true`: a run, a report or a draft, a board entry on a board that is not registered, which E4 does not list (3.3). Nothing written. | | Sets the run aside, says the board is not on the server. |
+| 409 | any other (the server's own) | `invalid` | One entry refused by a rule of the server's own (4.3). | | Sets that entry aside, shows the message; the others go on. |
 | 400 | `bad_request` | `invalid` | Among others: a part over 1 MiB; a path or project name a PC cannot hold; a P11 project breaking the test-id rules (5.3); a wrong `format_version`; a malformed `{test_id}`. | `large` (parts over 1 MiB); `format_version`, `known` | Sends the large file alone (B1) then the request again; refuses the name; says which test. |
 | 400 | `unsupported_filter` | `invalid` | A query parameter E2 or E8 does not define. | | Says the server cannot answer that search. |
 | 413 | `too_large` | `invalid` | A JSON request over `max_upload_bytes`, or a file alone over `max_file_bytes`. | `max_upload_bytes` or `max_file_bytes` | Says the file is too large for the server. |
@@ -498,6 +512,7 @@ on 429, 503 and 507.
 | 403 | `not_a_manager` | `denied` | A delete, restore or purge from a login that is not a manager. | | "This login is not a manager." |
 | 403 | `forbidden` | `denied` | A write the login's roles do not allow. | | |
 | 410 | `gone` | `not_found` | `since` names a token the server cannot answer from. | | Opens the project in full (P2 with `have`). |
+| 501 | `unsupported` | `invalid` | A call this server does not take: an optional call it does not list in `/info` (6.1), any call the contract does not have. | | Never retries it. |
 | 404 | `not_found` | `not_found` | An item the server does not hold; P10 (not an import) naming a `test_id` no test holds. | | Says it is not on the server. |
 | 422 | `digest_mismatch` | `corrupt` | A part's or upload's bytes do not match its name. | | Sends it again once, then sets it aside. |
 
@@ -541,7 +556,7 @@ One file of a project, listed under its path.
 | <a id="rule-5.2.project-answer"></a>`project_id` | string | yes | The project's UUID; `config/config.json` holds the same. |
 | `name` | string | no (P11: yes) | The project's name, as the app names its folder (rules below). |
 | `path` | string | *answer* | Its `name` as first stored, in NFC. In P1's list only. |
-| `token` | string | *answer* | The change token: opaque. |
+| `token` | string | *answer* | The change token: opaque. `""` from a server that does not offer P3 (P2). |
 | `updated` | time | *answer* | The last change to its files. |
 | `created_at`, `created_by` | time, string | *answer* | When and by whom it was created. |
 | `files` | map path → File | yes | Every file of the project by its `/` path, except those listed below. `config/config.json` is the project's configuration. |
@@ -744,7 +759,7 @@ One execution of one test on one board. **Written once.**
 | `files` | list of RunFile | yes | Every file of the run, the record included. |
 | `pushed_at` | time | *answer* | When the server stored it. |
 | <a id="rule-5.5.run-current"></a>`current` | boolean | *answer* | It is the current run of its `test_id` on its board (5.13). |
-| <a id="rule-5.5.run-annotation"></a>`annotation` | Annotation | *answer* | What people wrote about it; absent when it has no entry. |
+| <a id="rule-5.5.run-annotation"></a>`annotation` | Annotation | *answer* | What people wrote about it; <a id="rule-5.5.annotation-absent"></a>absent when it has no entry. |
 | <a id="rule-5.5.run-missing"></a>`missing` | map name → string | *answer* | Files of an `api` storage the server cannot give: `not_found` or `damaged`. Absent when none. A missing file never hides the run. |
 | <a id="rule-5.5.deleted-fields"></a>`deleted_at` | time | *answer* | When a manager deleted it. |
 | <a id="rule-5.5.deleted-by-login"></a>`deleted_by` | string | *answer* | The manager's **login**, as the server authenticated it. Never a field a client sends. |
@@ -1003,8 +1018,12 @@ A board of a project (2.6).
 | `last_ended` | time | *answer* | Its latest run's `ended`, counting only runs not deleted. |
 
 - <a id="rule-5.11.board-created"></a>A board comes into being with its first run (E1), its first entry (E15) or its first report or
-  draft (E10), whichever comes first. Its first spelling is that item's.
-- <a id="rule-5.11.board-never-removed"></a>**A board is never removed.** One whose runs are all deleted is still listed (E4).
+  draft (E10), whichever comes first. Its first spelling is that item's. On a server registering
+  its boards (3.3) a bench's write creates no board: the board is registered first (by its
+  administrator, or by an import, which creates it).
+- <a id="rule-5.11.board-never-removed"></a>**A board is never removed.** One whose runs are all deleted is still listed (E4). On a
+  server registering its boards, a board its administrator unregisters is no longer listed (E4
+  lists exactly the registered boards, 3.3).
 - The lot and the details are **entries, never replaced**, exactly as an annotation's (5.9).
   Each correction is an entry, so the history keeps the old value, who changed it and when.
 
@@ -1065,16 +1084,18 @@ per name.
 | `machine_id` | string | no | The bench that moved it last. |
 | `updated_at` | time | *answer* | When it moved. |
 
-**The pointer rule** (applied on every run push, except an import's):
+**The pointer rule** (applied on every run push; an import's only on a server not offering E6,
+6.7):
 
 - <a id="rule-5.13.newer-complete-current"></a>a **complete** run becomes current when its `test_id` has no pointer on that board, or when its
   `ended` is **strictly later** than the pointer's `ended`;
-- <a id="rule-5.13.incomplete-never-current"></a><a id="rule-5.13.tie-or-older-leaves"></a>a tie, an older run and an incomplete run leave the pointer as it is;
+- <a id="rule-5.13.incomplete-never-current"></a><a id="rule-5.13.tie-or-older-leaves"></a>a tie, an older run and an incomplete run leave the pointer as it is (an import on a server
+  not offering E6 alone breaks a tie by the greater `run_id`, 6.7);
 - <a id="rule-5.13.demoted-keeps-ended"></a>a demoted pointer keeps its `ended`, so only a newer run revives it;
 - <a id="rule-5.13.set-by-hand-ended"></a>setting a run current by hand (E6) gives the pointer that run's `ended`, so a run pushed later
   that ended after it takes over, as after any push.
 
-<a id="rule-5.13.delete-hands-on"></a><a id="rule-5.13.handoff-tiebreak"></a><a id="rule-5.13.handoff-none"></a>**Deleting the current run** hands the pointer to the newest remaining complete run not deleted,
+<a id="rule-5.13.delete-hands-on"></a><a id="rule-5.13.handoff-tiebreak"></a><a id="rule-5.13.handoff-none"></a>**Deleting the current run** hands the pointer to the newest remaining <a id="rule-5.13.handoff-complete-only"></a>complete run (never an incomplete one) not deleted,
 of the same `test_id` on the same board: the latest `ended`, then the greatest `run_id`. When none
 remains, the test has **no pointer** on that board any more, as before its first run, and the next
 complete run pushed becomes current.
@@ -1172,46 +1193,77 @@ All paths are under `<base>api/v1`, with `Authorization: Bearer <token>`. `{proj
 
 ### 6.1 Every call at a glance
 
-| # | Call | Who | Section |
-|---|---|---|---|
-| — | `GET /info` | any | 3.3 |
-| P1 | `GET /projects` | any | 6.3 |
-| P2, P3 | `GET /projects/{project}` (P3 with `since`) | any | 6.3 |
-| P2b | `POST /projects/{project}/read` | any | 6.3 |
-| P4, P5 | `GET /projects/{project}/tests` (P5 with `names`) | any | 6.3 |
-| P6 | `POST /projects/{project}/tests/read` | any | 6.3 |
-| P7 | `GET /projects/{project}/tests/{test}` · `POST …/tests/{test}/read` | any | 6.3 |
-| P8 | `GET /projects/{project}/releases/{test_id}` | any | 6.3 |
-| P8b | `GET /projects/{project}/releases/{test_id}/{version}` · `POST …/{version}/read` | any | 6.3 |
-| P9 | `POST /projects/{project}/changes` | bench | 6.3 |
-| P10 | `POST /projects/{project}/releases/{test_id}` | bench; importer with `import` | 6.3 |
-| P11 | `POST /projects` | bench | 6.3 |
-| E1 | `POST /projects/{project}/runs` | bench; importer with `import` | 6.4 |
-| E2 | `GET /runs` | any | 6.4 |
-| E3 | `GET /projects/{project}/runs/{run_id}` · `POST …/runs/{run_id}/read` | any | 6.4 |
-| E4 | `GET /projects/{project}/boards` | any | 6.4 |
-| E5 | `GET /projects/{project}/boards/{serial}` · `POST …/boards/{serial}/read` | any | 6.4 |
-| E6 | `POST /projects/{project}/boards/{serial}/tests/{test_id}/current` | bench; importer with `import` | 6.4 |
-| E7 | `POST /projects/{project}/runs/{run_id}/annotation` | bench; importer with `import` | 6.4 |
-| E8 | `GET /projects/{project}/artifacts` | any | 6.4 |
-| E9 | `GET /projects/{project}/artifacts/{kind}/{name}` | any | 6.4 |
-| E10 | `POST /projects/{project}/artifacts` | bench; importer with `import` | 6.4 |
-| E11 | `POST /projects/{project}/runs/{run_id}/delete` · `…/restore` | manager; importer with `import` (delete only) | 6.4 |
-| E12 | `POST /projects/{project}/artifacts/delete` · `…/restore` | manager; importer with `import` (delete only) | 6.4 |
-| E13 | `POST /projects/{project}/purge` | manager | 6.4 |
-| E14 | `GET /benches` | any | 6.4 |
-| E15 | `POST /projects/{project}/boards/{serial}/entries` | bench; importer with `import` | 6.4 |
-| E16 | `GET /projects/{project}/operators` | any | 6.4 |
-| E17 | `GET /projects/{project}/readings?test=<name>` | any | 6.4 |
-| L1 | `GET /library` | any | 6.5 |
-| L2 | `GET /library/{kind}/{id}/{version}` · `POST …/{version}/read` | any | 6.5 |
-| L3 | `POST /library/{kind}` | bench (no code); publisher (any) | 6.5 |
-| S1 | `GET /storages` | any | 6.6 |
-| S2 | `POST /storages` | bench | 7.3 |
-| S3 | `GET /storages/{store_id}/to_delete` | bench | 7.3 |
-| S4 | `POST /storages/{store_id}/deleted` | bench | 7.3 |
-| B1 | `POST /storages/{store_id}/blobs/{owner}/{sha256}` | bench, importer (a project's); bench, publisher (`library`) | 6.6 |
-| B2 | `GET /storages/{store_id}/blobs/{owner}/{sha256}` | any | 6.6 |
+**Core** calls every server takes; **optional** ones only a server listing them in `/info`'s
+`calls` (below).
+
+| # | Call | Who | Offer | Section |
+|---|---|---|---|---|
+| — | `GET /info` | any | core | 3.3 |
+| P1 | `GET /projects` | any | core | 6.3 |
+| P2 | `GET /projects/{project}` | any | core | 6.3 |
+| P2b | `POST /projects/{project}/read` (without `since`) | any | core | 6.3 |
+| P3 | `GET /projects/{project}?since=…` · `POST /projects/{project}/read` with `since` | any | optional | 6.3 |
+| P4, P5 | `GET /projects/{project}/tests` (P5 with `names`) | any | optional | 6.3 |
+| P6 | `POST /projects/{project}/tests/read` | any | optional | 6.3 |
+| P7 | `GET /projects/{project}/tests/{test}` · `POST …/tests/{test}/read` | any | core | 6.3 |
+| P8 | `GET /projects/{project}/releases/{test_id}` | any | optional | 6.3 |
+| P8b | `GET /projects/{project}/releases/{test_id}/{version}` · `POST …/{version}/read` | any | optional | 6.3 |
+| P9 | `POST /projects/{project}/changes` | bench | core | 6.3 |
+| P10 | `POST /projects/{project}/releases/{test_id}` | bench; importer with `import` | core | 6.3 |
+| P11 | `POST /projects` | bench | core | 6.3 |
+| E1 | `POST /projects/{project}/runs` | bench; importer with `import` | core | 6.4 |
+| E2 | `GET /runs` | any | optional | 6.4 |
+| E3 | `GET /projects/{project}/runs/{run_id}` · `POST …/runs/{run_id}/read` | any | core | 6.4 |
+| E4 | `GET /projects/{project}/boards` | any | core | 6.4 |
+| E5 | `GET /projects/{project}/boards/{serial}` · `POST …/boards/{serial}/read` | any | core | 6.4 |
+| E6 | `POST /projects/{project}/boards/{serial}/tests/{test_id}/current` | bench; importer with `import` | optional | 6.4 |
+| E7 | `POST /projects/{project}/runs/{run_id}/annotation` | bench; importer with `import` | core | 6.4 |
+| E8 | `GET /projects/{project}/artifacts` | any | core | 6.4 |
+| E9 | `GET /projects/{project}/artifacts/{kind}/{name}` | any | core | 6.4 |
+| E10 | `POST /projects/{project}/artifacts` | bench; importer with `import` | core | 6.4 |
+| E11 | `POST /projects/{project}/runs/{run_id}/delete` · `…/restore` | manager; importer with `import` (delete only) | optional | 6.4 |
+| E12 | `POST /projects/{project}/artifacts/delete` · `…/restore` | manager; importer with `import` (delete only) | optional | 6.4 |
+| E13 | `POST /projects/{project}/purge` | manager | optional | 6.4 |
+| E14 | `GET /benches` | any | optional | 6.4 |
+| E15 | `POST /projects/{project}/boards/{serial}/entries` | bench; importer with `import` | optional | 6.4 |
+| E16 | `GET /projects/{project}/operators` | any | optional | 6.4 |
+| E17 | `GET /projects/{project}/readings?test=<name>` | any | optional | 6.4 |
+| L1 | `GET /library` | any | optional | 6.5 |
+| L2 | `GET /library/{kind}/{id}/{version}` · `POST …/{version}/read` | any | optional | 6.5 |
+| L3 | `POST /library/{kind}` | bench (no code); publisher (any) | optional | 6.5 |
+| S1 | `GET /storages` | any | core | 6.6 |
+| S2 | `POST /storages` | bench | optional | 7.3 |
+| S3 | `GET /storages/{store_id}/to_delete` | bench | optional | 7.3 |
+| S4 | `POST /storages/{store_id}/deleted` | bench | optional | 7.3 |
+| B1 | `POST /storages/{store_id}/blobs/{owner}/{sha256}` | bench, importer (a project's); bench, publisher (`library`) | core | 6.6 |
+| B2 | `GET /storages/{store_id}/blobs/{owner}/{sha256}` | any | core | 6.6 |
+| U1 | `GET /users` | any | optional | 6.8 |
+
+**Core and optional calls.** <a id="rule-6.1.core-calls"></a>Every server takes the **core**
+calls: `/info`, S1, P1, P2 (and P2b), P7, P9, P10, P11, E1, E3, E4, E5, E7, E8, E9, E10, B1 and
+B2. With them alone the app creates, opens, syncs and pushes a project, releases a test, pushes
+runs with their files, reads a board's runs back, comments a run and changes its verdict by hand
+(E7), and makes, pushes, lists and opens reports, exports and drafts (E8, E9, E10). Every other
+call is **optional**: a server offers those it chooses, by their ids above, and lists them in `/info`'s `calls` (3.3). <a id="rule-6.1.unlisted-501"></a>An optional
+call the server does not list answers `501 unsupported`, kind `invalid` (4.3), as a call it does
+not have: never `404` (proof that an item is absent) and never served. A call it lists follows
+every rule of its section. The app sends an optional call only to a server listing it.
+
+What each group of optional calls gives the app; the app offers a feature only when the server
+lists every call of its group:
+
+| Optional calls | What the app does with them | Without them |
+|---|---|---|
+| P3 | Syncs a project by what changed since its last read. | Each sync pass reads the whole project (P2); every token is `""` (P2). |
+| P4, P5, P6 | Lists a project's tests; reads several tests in one request. | Reads a test by its name (P7), or the whole project. |
+| P8, P8b | Lists a test's releases and reads one release alone. | Reads them with the project (P2 holds every release). |
+| E2, P4, E14, E16, E17 | **Search**: runs (E2) across boards and dates by any filter, beside the reports E8 (a core call) lists, and the tests, benches, operators and readings the filters propose (P4, E14, E16, E17; the boards by E4). | No search; a board's results still open (E4, E5), the reports still list (E8). |
+| E6 | **Set current**: a person picks which run of a test counts on a board. | The pointer rule alone (5.13): the newest complete run counts. |
+| E15 | **Board entries**: a board's lot and its own fields. | None. |
+| E2, E11, E12, E13 | **Delete and trash**: a manager deletes, restores and purges runs and artifacts (E11–E13); the trash lists them (E2, and E8 — a core call — with `deleted=only`). <a id="rule-6.1.manager-calls-need-a-manager"></a>A server lists E11, E12 and E13 only when some login can hold the role `manager` (3.5): where nobody may delete, it lists none of them, and the app greys Delete, saying why. | Nothing is ever deleted through the app. |
+| L1, L2, L3 | **The library**: bundles, configurations, templates and equipment packs shared through the server. | No library on this server. |
+| S2, S3, S4 | **A project's own storage** (7.3): files kept in a storage the server does not use. | A project's files go to the server's own storages only. |
+| U1 | **The server's users**: a bench picks the operator from them; the server checks each run's `operator` and each release's `released_by` (6.8). | Any name, as typed. |
 
 **Rules shared by many calls:**
 
@@ -1256,8 +1308,8 @@ Content-Type: image/png
 
 | Rule | |
 |---|---|
-| <a id="rule-6.2.request-content-type"></a>Request type | A request body is `application/json` or `multipart/form-data`. Any other `Content-Type`: `400 bad_request`. (B1 alone takes `application/octet-stream`.) |
-| <a id="rule-6.2.multipart-form"></a>First part | Named `json`, `Content-Type: application/json`: the object. It may carry its own `Content-Encoding: gzip`. |
+| <a id="rule-6.2.request-content-type"></a>Request type | A request body is `application/json` or `multipart/form-data`. Any other `Content-Type`: `400 bad_request`. (B1 alone takes `application/octet-stream`.) A multipart body is sent plain, never with a `Content-Encoding` (2.12). |
+| <a id="rule-6.2.multipart-form"></a>First part | Named `json`, `Content-Type: application/json`: the object, as plain JSON. It carries no `Content-Encoding` (2.12). |
 | <a id="rule-6.2.part-boundary"></a>File parts | Named `sha256:<hex>` of their bytes. Only for files whose `store_id` is an `api` storage, and only for a file of **at most 1 MiB** (1,048,576 bytes; a file of exactly that size rides as a part). `filename` is a hint for logs. `Content-Type` is the file's mimetype: a RunFile's `mimetype`; for an artifact, from its name's extension (`.html` `text/html`, `.json` `application/json`, `.md` `text/markdown`, `.docx` `application/vnd.openxmlformats-officedocument.wordprocessingml.document`, any other `application/octet-stream`). A receiver never relies on a part's `Content-Type`. |
 | <a id="rule-6.2.two-parts-one-name-400"></a>One part per content | Two files with the same bytes travel as one part. Two parts with one name: `400 bad_request`. |
 | <a id="rule-6.2.digest-mismatch"></a><a id="rule-6.2.part-size-400"></a>Checked | The receiver hashes each part. Bytes not matching the name: `422 digest_mismatch` (kind `corrupt`). A part whose size is not the `size` its file states: `400 bad_request`. |
@@ -1317,8 +1369,14 @@ ordered by name (case folded).
 <a id="rule-P2.whole"></a>Answer: the whole Project (files, bundle, every release with its documents, `missing`, `token`)
 + parts. One request opens a project.
 
+<a id="rule-P2.token-empty-without-P3"></a>**The token and P3.** A server that does not list P3
+answers `token: ""` here and wherever a token is answered (P1, P2b, P4, P5, P6, P9, P11). The app
+then reads the whole project with P2 on every sync pass and never sends `since`. A server listing
+P3 answers a non-empty token everywhere.
+
 #### P3 · `GET /projects/{project}?since=<token>&have=…`
 
+Optional (6.1): P2, or P2b, with `since`. A server not listing it answers `501 unsupported`.
 Answer: what changed since the token, + parts:
 
 ```json
@@ -1342,7 +1400,7 @@ Answer: what changed since the token, + parts:
 #### P2b · `POST /projects/{project}/read`
 
 Body `{"have": [...], "since": "…"}` (`since` optional). Answer: as P2, or P3 when `since` is
-given; `410 gone` as P3.
+given; `410 gone` as P3. With `since`, it is P3's: `501 unsupported` from a server not listing P3.
 
 #### P4 · `GET /projects/{project}/tests`
 
@@ -1474,6 +1532,8 @@ POST /api/v1/projects/{project}/releases/3f9c2a1e-7b4d-4e8a-9c61-2d5b8e0f4a17
 The server:
 
 1. <a id="rule-P10.not-found"></a>Finds the test whose `test.json` holds the path's `test_id`. None: `404 not_found`.
+   A server listing U1 then checks `released_by`: none of its users, `409 unknown_operator`
+   (6.8).
 2. <a id="rule-P10.changed"></a>Checks every file version named is still what it holds. Else `409 changed`, with
    `details.current` the test's documents now and `details.changed` the paths whose version is
    not the server's.
@@ -1537,7 +1597,10 @@ The server does this **in one step that either all happens or none of it**:
 
 Other refusals, `400 bad_request`: a format-2 run with `lot`; a board name `""` or with blanks
 around it; a value of `extra` that is not a string; an unknown `format_version`. <a id="rule-E1.project-id-match"></a>A `project_id`
-in the body must equal the path's.
+in the body must equal the path's. A server listing U1: an `operator` none of its users, `409
+unknown_operator`, nothing written (6.8). A server registering its boards (`boards_registered`,
+3.3): a new run on a board that is not registered (E4 does not list it), `409 unknown_board`,
+nothing written; never on a board E4 lists.
 
 Answer `200`:
 
@@ -1590,9 +1653,12 @@ not hold: `404 not_found`.
 
 #### E4 · `GET /projects/{project}/boards?part_number=&board_revision=`
 
-<a id="rule-E4.list"></a>Answer: `{"boards": [Board]}` **without** `entries`. <a id="rule-E4.filters"></a>Each filter is optional: absent means any,
+<a id="rule-E4.list"></a>Answer: `{"boards": [Board]}` **without** `entries`. <a id="rule-E4.every-board"></a>Every board of the project is
+listed, one no run was pushed to yet included (a report's or an entry's board); on a server
+registering its boards (3.3), exactly the registered boards, no more, no less. <a id="rule-E4.filters"></a>Each filter is optional: absent means any,
 empty means none. <a id="rule-E4.order"></a>Ordered by part number, then revision, then serial, each ascending by case
-folding, "none" first. A board whose runs are all deleted is still listed.
+folding, "none" first. A board whose runs are all deleted is still listed. On a server registering
+its boards (3.3), every board registered is listed, before its first run too, and no other.
 
 #### E5 · `GET /projects/{project}/boards/{serial}?part_number=…&board_revision=…&include=current&have=…` · `POST …/boards/{serial}/read`
 
@@ -1700,6 +1766,7 @@ file first put in the active storage, or a part of the same request for an `api`
 | A draft with no draft held | `saved`, whatever its `replaces`. |
 | A draft whose `replaces` is not the held draft's `sha256` | `changed`, with the current draft; nothing written. |
 | <a id="rule-E10.deleted-name"></a>A name a manager deleted | `409 deleted` (a bench cannot undo a delete by publishing again), except a push equal to that name's newest generation: a replay, `already`, and the artifact stays deleted. |
+| A report or a draft (not an import, not a replay) on a board that is not registered, on a server registering its boards (3.3) | `409 unknown_board`, kind `invalid`; nothing written. |
 
 Answer: `{"status": "saved" | "already" | "changed", "artifact": Artifact}`. The first report or
 draft of a board creates the board. An export with a serial, or a report or draft without one:
@@ -1762,7 +1829,8 @@ optional): each item `{"run_id"}` or `{"kind", "serial", "part_number"?, "board_
   retried request). An item that is not deleted refuses the whole request: `400 bad_request`,
   nothing purged.
 - <a id="rule-E13.run-id-kept"></a>The server keeps each purged run's `run_id`, so a later push of it is `409 deleted`.
-- <a id="rule-E13.pointer-of-purged"></a>A purge of a run a pointer still names (possible only after an imported delete) hands the
+- <a id="rule-E13.pointer-of-purged"></a>A purge of a run a pointer still names (possible only after an imported delete on a server
+  offering E6) hands the
   pointer on, as a delete does.
 
 Answer:
@@ -1796,7 +1864,9 @@ Save a board's lot or fields. Role: `bench` (importer: 6.7). Body `{"entries": [
 <a id="rule-E15.statuses"></a>Works **exactly as E7**: each entry is added to the board's list and answered `saved`, `changed`
 (kept, not current, with the current entry) or `already` (a replay). An entry's slot is its
 `kind` and, for a `field`, its `name` compared exactly. `entry_id` is unique within its board. The
-<a id="rule-E15.creates-board"></a>board is created when it is new, so a lot can be entered before the board's first run. Answer:
+<a id="rule-E15.creates-board"></a>board is created when it is new, so a lot can be entered before the board's first run. On a
+server registering its boards (3.3), a bench's entry (not an import) on a board that is not
+registered is `409 unknown_board`, kind `invalid`, nothing written. Answer:
 `{"results": [{"entry_id", "status", "current": BoardEntry}]}`.
 
 #### E16 · `GET /projects/{project}/operators`
@@ -1934,7 +2004,8 @@ An import carries them as they were.
   instead of stamping its own.
 - <a id="rule-import.ignored-without"></a>**Without `import`, or without the role**, those fields are ignored.
 - <a id="rule-import.contradiction"></a>**The server still checks everything else** exactly as for a bench: hashes, missing files, the
-  board, replays. It refuses an imported item that contradicts what it holds: the same id with
+  board's names, replays; but never whether the board is registered (an import is taken on any
+  board, `409 unknown_board` is never an import's, 3.3). It refuses an imported item that contradicts what it holds: the same id with
   other content (`409 run_conflict` for a run), or a number already taken (`409 changed`,
   `details.current` what holds it).
 
@@ -1942,18 +2013,54 @@ Per call:
 
 | Call | With `"import": true` |
 |---|---|
-| <a id="rule-import.E1-no-pointer"></a>E1 | The run keeps the `pushed_at` sent. **No pointer moves.** |
+| <a id="rule-import.E1-no-pointer"></a>E1 | The run keeps the `pushed_at` sent. On a server offering E6, **no pointer moves**: the importer sets each one (E6). <a id="rule-import.E1-rule-without-E6"></a>On a server **not** offering E6 (its `/info` `calls` does not list it), the imported run moves the pointer **as a bench's run does** (the pointer rule, 5.13): the newest complete run becomes current, the latest `ended`, a tie going to the greater `run_id`, whatever order the runs come in. |
 | <a id="rule-import.E6-as-sent"></a>E6 | The pointer is set exactly as sent: `run_id` (or `null`), `ended`, `machine_id`, `updated_at`; `replaces` not checked. The run named must exist, on that board and test, be complete and not deleted (else `404` / `400` as for a bench). Without `ended`, the pointer takes its run's `ended`; without `updated_at`, the server's time. |
 | <a id="rule-import.E7-E15-received-at"></a>E7, E15 | Each entry keeps its `received_at`, or stays without one when none is sent. An entry's `current` is never imported: it is computed. |
 | <a id="rule-import.E10-generation"></a>E10 | A report or export keeps the `generation` sent. One the name already holds with another file or `info`: `409 changed`, `details.current` the Artifact of that generation. |
-| <a id="rule-import.E11-E12-delete"></a>E11, E12 (delete) | The delete keeps `deleted_at`, `deleted_by`, `deleted_bench` and (a run's) `deleted_was_current` as sent, and **hands nothing on**. <a id="rule-import.delete-keeps-pointer"></a>A pointer naming the run deleted keeps naming it, until the importer sets that pointer (E6) or a purge hands it on: E5 answers it as it is, and the run's `current` stays `true`. |
+| <a id="rule-import.E11-E12-delete"></a>E11, E12 (delete) | The delete keeps `deleted_at`, `deleted_by`, `deleted_bench` and (a run's) `deleted_was_current` as sent. On a server offering E6 it **hands nothing on**: <a id="rule-import.delete-keeps-pointer"></a>a pointer naming the run deleted keeps naming it, until the importer sets that pointer (E6) or a purge hands it on: E5 answers it as it is, and the run's `current` stays `true`. <a id="rule-import.delete-hands-on-without-E6"></a>On a server **not** offering E6, an imported delete of a run hands the pointer on **as a bench's delete does** (5.13): to the newest remaining complete run not deleted (the latest `ended`, then the greatest `run_id`), or no pointer when none remains; a pointer there never names a deleted run. |
 | <a id="rule-import.P10"></a>P10 | The release is filed under the path's `test_id` **whether or not a test holds it now** (a deleted test's releases move too). It keeps `version`, `released_at` and `test` (the name it was released under). Its documents travel whole as `documents` (the Release's own map: text, or references whose bytes are parts of the same `multipart/form-data` request, sent alone with B1, or held already) in place of `files`. Under an id no test holds, `test` and `documents` are required: without either, `400 bad_request`. Its number taken by the same release (same `content` and `fingerprint`): answered again. By another: `409 changed`. |
 
-- **Pointers are the source's, never recomputed.** An imported run moves no pointer; the importer
-  then sets each pointer with E6 as the source had it, a demoted one or none included.
+- **Pointers are the source's where the server offers E6.** An imported run moves no pointer;
+  the importer then sets each pointer with E6 as the source had it, a demoted one or none
+  included. A server not offering E6 picks the current runs itself, by the pointer rule (an
+  imported delete handing the pointer on as a bench's does): a pointer the source set by hand
+  (an older run, or none) is not kept there, and the app says so before it moves.
 - <a id="rule-import.bench-seen-not-imported"></a>**Not data:** a Bench's `first_seen` and `last_seen` are the server's record of the requests it
   received, an import's included. An import neither carries nor keeps them.
 - **The way out** is the reads: every call already answers those fields.
+- **What an import needs.** Each kind of data moves by its own call: a server that does not list
+  an optional call (6.1) takes none of what it carries (no pointer set as sent without E6: the
+  server picks it, above; no board entry without E15, no deleted run without E11).
+
+### 6.8 The server's users
+
+#### U1 · `GET /users`
+
+Optional (6.1). Any login. <a id="rule-U1.users"></a>Answer: the server's **active** users:
+
+```json
+{"users": [{"name": "jdupont", "display_name": "Jean Dupont"},
+           {"name": "mlefevre", "display_name": "Marie Lefèvre"}]}
+```
+
+- `name`: what a run records as its `operator` and a release as its `released_by`. Never `""`.
+- `display_name`: what the app shows for that user. Never `""`: the `name` again when the server
+  has no other.
+- Ordered by `display_name`, then by `name`, each compared by case folding (2.4). A user the
+  server no longer lets work (left, disabled) is not listed. No parameter: any is `400
+  bad_request` (2.11).
+
+<a id="rule-U1.operator-known"></a>**What listing U1 makes the server check.** A server listing
+U1 holds a run's `operator` (E1) and a release's `released_by` (P10) to its users: a name that is
+not the `name` of a user U1 lists now, compared by case folding (2.4), is refused with `409
+unknown_operator`, kind `invalid` (the outbox sets that entry aside), and nothing is written.
+<a id="rule-U1.operator-exempt"></a>Not checked:
+
+- an absent `operator` or `released_by`: allowed, as on any server;
+- an import (`"import": true`, 6.7): a name recorded long ago may be no user now;
+- a replay of a run already stored: `already`, whatever the list holds now.
+
+The name is kept as sent (a record, 2.4). A server that does not list U1 checks no name.
 
 ---
 
@@ -1964,8 +2071,8 @@ share, an FTPS server, an SFTP server. Their bytes never pass through the API: t
 writes them directly, and the API carries only references.
 
 - **A server that keeps every byte itself** (one storage, backend `api`) **can skip 7.1 and 7.2.**
-- **7.3 applies to every server**: a project's own configuration can name a storage the app
-  writes to itself, and the app declares it to you.
+- **7.3 applies to a server listing S2, S3 and S4** (optional, 6.1): a project's own
+  configuration can name a storage the app writes to itself, and the app declares it to you.
 
 ### 7.1 Your own file storages
 
@@ -2004,9 +2111,9 @@ What the app does there (so you know what to expect in the storage):
 | Read | Needs no marker: a blob whose hash matches **is** the blob. Streamed to a temporary file and kept only when size and hash match. Otherwise the file is shown as missing and tried again later. |
 | Delete | In your storages: never (you reclaim). In a declared storage: only what you list (7.3). |
 
-### 7.3 Storages the app declares (every server)
+### 7.3 Storages the app declares (S2–S4)
 
-A project's configuration may keep its files in a storage the server never uses (a NAS folder, a
+S2, S3 and S4 are optional (6.1); S3 and S4 serve only the storages S2 declared. A project's configuration may keep its files in a storage the server never uses (a NAS folder, a
 lab's SFTP server). The app writes there itself and **declares** that storage, so the server's
 information is complete even when no client of the server reads it. <a id="rule-7.3.declared-never-cleaned"></a>The server may not reach it:
 it then reports `reachable: false`, assumes each reference into it holds, and **never deletes in
@@ -2080,8 +2187,8 @@ action of the app's storage interfaces (projects, library, evidence), stored thr
 read back through another, gives back exactly what went in. On top of the calls, these rules must
 hold:
 
-1. `/info` with a valid token answers `server`, `api_versions`, `server_time`, `limits` and
-   `user`. With no `Authorization`: `401`, `WWW-Authenticate: Bearer`, `X-Bench-Store: v1`, and
+1. `/info` with a valid token answers `server`, `api_versions`, `server_time`, `limits`, `calls`,
+   `boards_registered` and `user`. With no `Authorization`: `401`, `WWW-Authenticate: Bearer`, `X-Bench-Store: v1`, and
    an envelope whose `details` holds `api_versions` and `server` and nothing else. A valid token
    that may not use this server: `403`, never `401`.
 2. Every answer, 4xx and 5xx included, carries `X-Bench-Store: v1`, `X-Request-Id`, and a `Date`
@@ -2099,6 +2206,8 @@ hold:
    back verbatim on the same base.
 7. A name holding `/`, `#`, `+`, a blank or a character outside ASCII, sent as a path segment or a
    query value, reaches the server as that one name.
+8. Every core call is taken (6.1). Each optional call `/info` lists follows its section; each one
+   it does not list answers `501 unsupported`. A server offering no optional call is conformant.
 
 ### 8.2 Run the Procedo server conformance kit against your server
 
@@ -2125,6 +2234,8 @@ itself: run that first, it should all pass.
 1. Make two logins on a **test instance** of your server, each with a token: a bench login with
    the roles `bench` and `publisher`, and a manager login with the role `manager` (3.5).
 2. Leave room in your limits: `max_upload_bytes` and `max_file_bytes` of at least 4 MiB.
+   If your server lists U1, make the users the kit's runs and releases name active on it (the
+   kit's `README.md` lists them): it checks every `operator` (6.8).
 3. Set the variables and run the kit from its folder:
 
    | Variable | Value |
@@ -2142,6 +2253,25 @@ The kit needs no call that empties a server: each case writes under project ids,
 library ids of its own, made new for each run, and reads back what it wrote among whatever else
 your server holds. What it wrote stays on the server. A case that needs an empty server is
 skipped against yours, saying why.
+
+**A server offering some optional calls only** (6.1) runs the same kit. Before any case runs, the
+kit reads `/info`'s `calls` and skips each case making an optional call your server does not list,
+naming the call; the kit ships the list of the optional calls each case makes. A case that runs
+and fails fails: nothing is skipped afterwards. One case checks that each call not listed answers
+`501 unsupported`. Every rule of the core calls keeps a case making core calls only, so it is
+checked on every server.
+
+**A server registering its boards** (`boards_registered: true`, 3.3) refuses the writes the kit
+makes on boards of its own (a run, a report, a board entry). Given the importer's token, the kit
+registers each such board itself when the server refuses a write on it `409 unknown_board`: it
+reads E4 first, and fails when E4 lists that board (a board E4 lists is never refused so); else
+it imports a run on it (an import is never refused for its board), checks E4 lists it, deletes
+and purges that run at once when the server offers E11 and E13, then sends the refused write
+again, and every case runs; without that token, those cases are skipped before they run, saying
+so. Such a run is always the kit's own: test id `ffffffff-ffff-4fff-bfff-ffffffffffff`, machine
+`0000feed`; the boards it registers stay. Run the kit against a test instance. Register at least
+one board in a project you name in `PROCEDO_KIT_BOARDS_PROJECT`: its cases check E4 lists its
+boards, a write on a board it does not list is refused, and one on a board it lists is taken.
 
 The kit's `README.md` has the details: how to read a failure, the cases skipped against your
 server, and the checks to make by hand (HTTPS, `Retry-After`, names holding `/`, `#` or `+` in

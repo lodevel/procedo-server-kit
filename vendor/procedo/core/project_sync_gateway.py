@@ -602,12 +602,18 @@ class SyncGateway:
         )
 
     def release(
-        self, working_copy: Path, test: str, note: str = "", ctx: OpContext | None = None
+        self,
+        working_copy: Path,
+        test: str,
+        note: str = "",
+        ctx: OpContext | None = None,
+        *,
+        released_by: str | None = None,
     ) -> int:
-        """Release *test* of a working copy of a project on a server, with *note*: on the
-        server first (its ``ProjectSource.release``: the web server's own, or the project's
-        folder on an FTPS server as a tree's), then the same release in the copy
-        (:mod:`project_sync_release`); the number the server gave it. Raises
+        """Release *test* of a working copy of a project on a server, with *note*, by
+        *released_by* (``None``: ``test_release.user()``): on the server first (its ``ProjectSource.release``: the web server's own,
+        or the project's folder on an FTPS server as a tree's), then the same release in the
+        copy (:mod:`project_sync_release`); the number the server gave it. Raises
         ``test_release.Refused`` (the message for the user)."""
         origin = self._origin_or_raise(working_copy)
         source = self._source_of(origin)
@@ -615,7 +621,9 @@ class SyncGateway:
             tree = self._tree_for(origin)
             base = self._base(tree, origin.base)
             source = TreeProjectSource(tree, base.parent, {origin.project_id: base})
-        return project_sync_release.release(Path(working_copy), source, test, note, ctx=ctx)
+        return project_sync_release.release(
+            Path(working_copy), source, test, note, ctx=ctx, released_by=released_by
+        )
 
     def renames_on_server(self, working_copy: Path) -> bool:
         """Whether a test of *working_copy* is renamed on its server (:meth:`rename_test`)

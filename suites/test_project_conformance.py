@@ -154,9 +154,18 @@ class Storage:
     name: str
     opener: Callable[[], Any]
     called: set[str] = field(default_factory=set)
+    #: A bench's view signed in with the login that moves data in (the roles bench and
+    #: importer, §3.5), where the storage tells logins apart (the API); None: :meth:`open`'s.
+    mover: Callable[[], Any] | None = None
 
     def open(self) -> Any:
-        source = self.opener()
+        return self._noted(self.opener())
+
+    def open_mover(self) -> Any:
+        """A view that may import (P10 with ``"import": true``)."""
+        return self._noted((self.mover or self.opener)())
+
+    def _noted(self, source: Any) -> Any:
         for action in PROTOCOL:
             setattr(source, action, self._noting(action, getattr(source, action)))
         return source
@@ -325,7 +334,7 @@ def an_empty_storage_lists_no_project(s: Storage, tmp_path: Path) -> None:
 @conformance(
     "create_project", "list_projects", "read_project", "fetch",
     rules=(
-        "2.9.text-or-reference", "2.12.gzip-json-part", "5.1.file", "5.2.project-answer",
+        "2.9.text-or-reference", "5.1.file", "5.2.project-answer",
         "6.2.multipart-form", "6.2.large-in-answer", "P1.list",
         "P11.create", "B1.upload", "B2.download",
     ),
@@ -337,7 +346,9 @@ def a_project_created_reads_back_byte_for_byte(s: Storage, tmp_path: Path) -> No
     assert _listed(reader) == [ProjectInfo(PID, NAME)]
     read = reader.read_project(PID)
     assert (read.project_id, read.name, read.releases) == (PID, NAME, {})
-    assert read.token
+    # A change token, but "" from a server without P3 (§6.3, P2).
+    session = getattr(reader, "session", None)
+    assert bool(read.token) is (session is None or "P3" in session.offered()), read.token
     _same_files(reader, dict(read.files), FILES, tmp_path)
     assert dict(read.bundle.files) == BUNDLE and read.bundle.version == made.bundle.version
     # A text document travels as its text whatever its size; a binary one never, even there.
@@ -601,8 +612,9 @@ def a_release_moved_in_lands_as_it_was(s: Storage, tmp_path: Path) -> None:
     """§6.10: a release imported keeps its number, its date, who made it, the name it was
     released under and its documents (one of them a binary), under its id whether or not a test
     holds it now; the same release again is answered as it is, another one under its number is
-    refused (``changed``)."""
-    source = s.open()
+    refused (``changed``). Over the API, with the login the app moves data in with: the roles
+    bench and importer (§3.5)."""
+    source = s.open_mover()
     _create(source)
     docs, _named = _docs()
     docs = {**docs, "board.png": b"\x89PNG\r\n\x1a\n" + bytes(range(256))}
@@ -936,6 +948,13 @@ def a_release_made_in_a_working_copy_is_the_storages_and_the_same_file_in_the_co
     ``releases/<test_id>/``, and the next sync brings nothing and meets no conflict. A test
     changed here and not synced, or changed on the storage since the last sync, is refused
     (the owner's sentence, §7.4), nothing released; once synced it is released."""
+    with pytest.MonkeyPatch.context() as patch:
+        # Released by one of the kit's users: a server listing U1 takes no other (§6.8).
+        patch.setattr(test_release, "user", lambda: "kit")
+        _release_from_a_working_copy(s)
+
+
+def _release_from_a_working_copy(s: Storage) -> None:
     source = s.open()
     _create(source)
     copy, sync = _checkout(s)
@@ -1018,14 +1037,19 @@ def test_every_action_reads_back_as_it_went_in_on_a_folder(case, backend, folder
 
 @pytest.fixture
 def reference(tmp_path):
-    tokens = {"t-bench": {"name": "bench", "roles": ["bench", "publisher", "importer"]}}
+    """The reference server with the kit's logins: a bench (``bench``, ``publisher``) and the
+    mover (``bench``, ``importer``), as a server the environment names gives them."""
+    logins = server_target.LOCAL_LOGINS
+    tokens = {token: logins[token] for token in ("t-bench", "t-mover")}
     with server_target.serve(tmp_path / "reference", tokens) as (base_url, _running):
         yield base_url
 
 
-def api_session(base_url: str) -> ApiSession:
-    bench = server_target.token("bench")
-    return ApiSession(server_target.endpoint(base_url), lambda _identity: ("bench", bench))
+def api_session(base_url: str, role: str = "bench") -> ApiSession:
+    """A session of the login holding *role* (``bench``; ``mover``: an unset mover's token
+    skips the case, saying which variable to set)."""
+    token = server_target.token(role)
+    return ApiSession(server_target.endpoint(base_url), lambda _identity: (role, token))
 
 
 def own_project(monkeypatch) -> None:
@@ -1088,12 +1112,16 @@ def api_calls() -> list[tuple[str, str]]:
 def api_storage(reference, api_calls, tmp_path, monkeypatch) -> Storage:
     own_project(monkeypatch)
     benches = iter(range(1000))
-    return Storage(
-        "api",
-        lambda: recording(
-            ApiProjectSource(api_session(reference), tmp_path / f"cache-{next(benches)}"), api_calls
-        ),
-    )
+
+    def opener(role: str) -> Callable[[], Any]:
+        def open_one() -> Any:
+            session = api_session(reference, role)
+            source = ApiProjectSource(session, tmp_path / f"cache-{next(benches)}")
+            return recording(source, api_calls)
+
+        return open_one
+
+    return Storage("api", opener("bench"), mover=opener("mover"))
 
 
 @pytest.mark.parametrize(("case", "backend"), params("api", pytest.mark.servers))

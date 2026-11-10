@@ -103,17 +103,41 @@ def read_spec(project_root: Path) -> dict[str, Any]:
     spec = load_config(project_root).get(SECTION)
     if not isinstance(spec, dict):
         return default_spec(project_root)
-    return copy.deepcopy(spec)
+    return project_entry(spec)
 
 
 def write_spec(project_root: Path, spec: dict[str, Any]) -> None:
-    """Replace the entry. ``EvidenceError`` when ``config.json`` exists but cannot be
-    read: the rest of that file would be lost."""
+    """Replace the entry (:func:`project_entry`: never this PC's own settings). ``EvidenceError``
+    when ``config.json`` exists but cannot be read: the rest of that file would be lost."""
     from . import config_manager
 
     data = load_config(project_root)
-    data[SECTION] = copy.deepcopy(spec)
+    data[SECTION] = project_entry(spec)
     config_manager.write_unified_config(_config_file(project_root).parent, data)
+
+
+def project_entry(spec: dict[str, Any]) -> dict[str, Any]:
+    """*spec* as a project keeps it (a copy): without the params that are this PC's setting
+    for its server (``ParamSpec.this_pc``: the web server's Accept any certificate), which
+    stay in Settings ▸ Server. Read and written so, a project never carries one, and never
+    turns one on for a PC that opens it."""
+    entry = copy.deepcopy(spec)
+    params = entry.get("params")
+    if isinstance(params, dict):
+        for p in backend_params(str(entry.get("backend", ""))):
+            if p.this_pc:
+                params.pop(p.key, None)
+    return entry
+
+
+def with_this_pc(entry: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
+    """*entry* (a project's) with this PC's own choices for its server as *source* (Settings ▸
+    Server's entry) has them: what a test of that server as this PC reaches it connects with."""
+    out = project_entry(entry)
+    for p in backend_params(str(out.get("backend", ""))):
+        if p.this_pc and param_value(source, p.key) not in (None, ""):
+            out = with_param(out, p.key, param_value(source, p.key))
+    return out
 
 
 def _home(project_root: Path) -> Path:

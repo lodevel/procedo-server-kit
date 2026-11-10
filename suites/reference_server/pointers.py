@@ -6,7 +6,9 @@ no pointer on that board,
 or when its ``ended`` is strictly later than the pointer's; a tie, an older run and an
 incomplete one leave it. A demoted pointer keeps its ``ended``. Deleting (or purging) the
 current run hands the pointer to the newest remaining complete run not deleted, else leaves no
-pointer. E6 is the manual escape; an importer sets the pointer as the source had it.
+pointer. E6 is the manual escape; an importer sets the pointer as the source had it. A server
+not offering E6 picks the current run of an import itself: the rule, a tie to the greater
+``run_id`` (contract §6.7, ``import.E1-rule-without-E6``).
 """
 
 from __future__ import annotations
@@ -34,12 +36,18 @@ def is_current(project: Project, run: StoredRun) -> bool:
 
 
 def apply_pointer_rule(
-    state: State, project: Project, run: StoredRun, machine_id: str | None = None
+    state: State,
+    project: Project,
+    run: StoredRun,
+    machine_id: str | None = None,
+    *,
+    tie_to_greater: bool = False,
 ) -> dict | None:
     """The run becomes current by the rule (a push, a restore). Returns the new pointer, or None.
 
     The pointer's ``machine_id`` is the bench that moved it: the run's own on a push, the
-    manager's on a restore.
+    manager's on a restore. *tie_to_greater*: an import on a server without E6, where runs come
+    in any order: a tie goes to the greater ``run_id`` (§6.7).
     """
     if not run.obj["complete"]:
         return None
@@ -47,7 +55,9 @@ def apply_pointer_rule(
     ended = run.obj["ended"]
     pointer = project.pointers.get(key)
     held = pointer.get("ended") if pointer is not None else None
-    tie_wins = state.broken("5.13.tie-or-older-leaves")
+    tie_wins = state.broken("5.13.tie-or-older-leaves") or (
+        tie_to_greater and pointer is not None and run.run_id > str(pointer.get("run_id") or "")
+    )
     if held is not None and (ended < held if tie_wins else ended <= held):
         return None
     new = {
@@ -81,12 +91,16 @@ def hand_over(state: State, project: Project, run: StoredRun, machine_id: str) -
         if (other.board_key, other.test_id) == key
         and other.run_id != run.run_id
         and other.deleted is None
-        and other.obj["complete"]
+        and (other.obj["complete"] or state.broken("5.13.handoff-complete-only"))
     ]
     if state.broken("5.13.handoff-tiebreak"):
         best = max(remaining, key=lambda other: other.run_id, default=None)
     else:
-        best = max(remaining, key=lambda other: (other.obj["ended"], other.run_id), default=None)
+        # .get: an incomplete run has no ended, and only a server broken on purpose
+        # (5.13.handoff-complete-only) counts it among the heirs
+        best = max(
+            remaining, key=lambda other: (other.obj.get("ended") or "", other.run_id), default=None
+        )
     if best is None:
         if state.broken("5.13.handoff-none"):
             pointer.update(run_id=None, machine_id=machine_id, updated_at=state.now())
@@ -96,10 +110,12 @@ def hand_over(state: State, project: Project, run: StoredRun, machine_id: str) -
     new = {
         "test_id": run.test_id,
         "run_id": best.run_id,
-        "ended": best.obj["ended"],
+        "ended": best.obj.get("ended"),  # none: the incomplete heir of the fault above
         "machine_id": machine_id,
         "updated_at": state.now(),
     }
+    if new["ended"] is None:
+        del new["ended"]
     project.pointers[key] = new
     return copy.deepcopy(new)
 

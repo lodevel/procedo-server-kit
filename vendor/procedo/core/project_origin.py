@@ -39,6 +39,7 @@ from typing import Any
 
 from . import atomic_write, project_local_state
 from .evidence_store import EvidenceError
+from .server_certificate import without_choice  # this PC's, never a record's
 
 log = logging.getLogger(__name__)
 
@@ -169,7 +170,7 @@ def to_json(origin: Origin) -> dict[str, Any]:
         "backend": origin.backend,
         "identity": origin.identity,
         "base": origin.base,
-        "params": dict(origin.params),
+        "params": without_choice(origin.params),
         "project_id": origin.project_id,
         "working_copy": origin.working_copy,
         "needs_pull": origin.needs_pull,
@@ -244,7 +245,7 @@ def from_json(data: dict[str, Any]) -> Origin:
         backend=str(data.get("backend") or ""),
         identity=str(data.get("identity") or ""),
         base=str(data.get("base") or ""),
-        params=dict(params) if isinstance(params, dict) else {},
+        params=without_choice(params) if isinstance(params, dict) else {},
         project_id=str(data.get("project_id") or ""),
         working_copy=folder,
         files={} if unreadable else files,
@@ -416,7 +417,7 @@ def repoint(
     origin.backend = backend
     origin.identity = identity
     origin.base = base
-    origin.params = dict(params)
+    origin.params = without_choice(params)
     origin.needs_pull = True
     # What the old address answered says nothing of the new one: its first read is whole.
     origin.since, origin.listing, origin.stores, origin.releases_failed = "", {}, {}, {}

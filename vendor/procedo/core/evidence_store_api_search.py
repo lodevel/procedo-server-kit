@@ -9,7 +9,8 @@
   project the server holds no files of has none), E14 the benches the server has seen, with
   their labels, E16 the operators the project's runs recorded
   (:func:`evidence_api_search.operators`), E17 a test's readings
-  (:func:`evidence_api_search.readings`).
+  (:func:`evidence_api_search.readings`). A call the server does not offer (§6.1) is not sent:
+  its field proposes nothing from this server, typing still works.
 
 Qt-free.
 """
@@ -24,6 +25,7 @@ from .evidence_search import RUN_FILTERS, Filters, ResultRow, refuse_unanswered
 from .evidence_search_choices import WEB_CHOICES, Choices
 from .evidence_store import NEWEST, EvidenceError, OpContext
 from .evidence_tree import name_key
+from .server_offer import BENCHES, OPERATORS, READINGS, TESTS
 
 
 class ApiSearch:
@@ -37,6 +39,8 @@ class ApiSearch:
 
     _call: Any
     _op: Any
+    _ready: Any
+    calls: frozenset[str]
 
     def search(
         self,
@@ -56,14 +60,17 @@ class ApiSearch:
 
     def search_choices(self, project_id: str, ctx: OpContext | None = None) -> Choices:
         """What the fields propose: E4's boards, P4's tests, E14's benches, E16's operators
-        (one spelling per name, folded)."""
+        (one spelling per name, folded); each of P4, E14, E16 only from a server offering it."""
         from .evidence_api_search import operators as listed_operators
 
         with self._op(ctx):
             boards = self._call("listBoards", "GET", "projects", project_id, "boards").data
-            tests = self._tests(project_id)
-            benches = self._call("listBenches", "GET", "benches").data
-        operators = {name_key(o): o for o in listed_operators(self, project_id, ctx) if o}
+            tests = self._tests(project_id) if TESTS in self.calls else []
+            benches = (
+                self._call("listBenches", "GET", "benches").data if BENCHES in self.calls else {}
+            )
+        listed = listed_operators(self, project_id, ctx) if OPERATORS in self.calls else []
+        operators = {name_key(o): o for o in listed if o}
         keys = [board_key(b) for b in boards.get("boards") or [] if isinstance(b, dict)]
         named = [(str(b.get("machine_id") or ""), str(b.get("label") or ""))
                  for b in benches.get("benches") or [] if isinstance(b, dict)]  # fmt: skip
@@ -89,7 +96,10 @@ class ApiSearch:
     def search_readings(
         self, project_id: str, test: str, ctx: OpContext | None = None
     ) -> list[tuple[str, str]]:
-        """E17: the readings *test*'s runs recorded (:func:`evidence_api_search.readings`)."""
+        """E17: the readings *test*'s runs recorded (:func:`evidence_api_search.readings`);
+        none from a server that does not offer E17."""
         from .evidence_api_search import readings
 
-        return readings(self, project_id, test, ctx)
+        with self._op(ctx):
+            self._ready()
+        return readings(self, project_id, test, ctx) if READINGS in self.calls else []

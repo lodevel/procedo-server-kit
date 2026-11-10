@@ -44,9 +44,12 @@ def release(
     note: str = "",
     *,
     ctx: OpContext | None = None,
+    released_by: str | None = None,
 ) -> int:
-    """Release *test* of *working_copy* on its server *source*, then write the same release
-    into the copy; the number the server gave it. Raises ``test_release.Refused``."""
+    """Release *test* of *working_copy* on its server *source* by *released_by* (``None``:
+    ``test_release.user()``; a server that lists its users checks the name:
+    ``unknown_operator``), then write the same release into the
+    copy; the number the server gave it. Raises ``test_release.Refused``."""
     working_copy = Path(working_copy)
     project_sync._require_project_folder(working_copy)
     with project_sync._lock_for(working_copy):
@@ -62,7 +65,7 @@ def release(
             content=ready.state.content,
             files={path: version_of(ready.docs[name]) for path, name in named.items()},
             note=note.strip(),
-            released_by=test_release.user(),
+            released_by=test_release.user() if released_by is None else released_by,
             pc=test_release.pc_name(),
             machine_id=app_settings.get_machine_id(),
         )
@@ -102,6 +105,8 @@ def _refused(exc: EvidenceError) -> test_release.Refused:
     """What the user is told of a release the server refused."""
     if exc.code == "changed" or exc.kind == "not_found":
         return test_release.Refused(test_release.CHANGED_ON_SERVER)
-    if exc.code == "same_as_release":
+    if exc.code in ("same_as_release", "unknown_operator"):
         return test_release.Refused(str(exc))
+    if exc.kind in ("unreachable", "timeout"):
+        return test_release.Refused(test_release.SERVER_UNREACHABLE)
     return test_release.Refused(f"The server did not take the release: {exc}")

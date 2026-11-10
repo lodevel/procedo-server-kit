@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from . import faults
 from .call import Answer, Call
 from .drafts import check_drafts, save_drafts
-from .errors import bad_request
+from .errors import ApiError, bad_request
 from .ids import id_problem, test_of_key, tests_of
 from .project_files import (
     check_form,
@@ -195,6 +195,8 @@ def _saved(path: str, version: str | None = None) -> dict:
 
 
 def _changed(path: str, current: dict | None) -> dict:
+    if faults.on("4.5.refusal-inside-200"):
+        raise ApiError(409, "changed", "invalid", f"{path} changed on the server meanwhile.")
     result: dict = {"path": path, "status": "changed"}
     if current is not None:
         result["current"] = copy.deepcopy(current)

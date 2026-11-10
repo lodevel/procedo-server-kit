@@ -7,7 +7,7 @@ tolerates what it reads, and acts on an error's ``kind`` alone, so a server brea
 would pass through it. Every answer seen here is held to the rules every answer follows
 (:meth:`Api.check`): ``X-Bench-Store``, ``X-Request-Id`` and ``Date``; no absolute URL of the
 API; the error envelope on every refusal; no ``null`` where the contract has none; a multipart
-answer never gzipped as a whole; and its JSON valid against the twin,
+answer never gzipped, as a whole or a part; and its JSON valid against the twin,
 ``procedo_api.openapi.yaml`` (:mod:`openapi_twin`).
 
 Each check names the rules it holds (``@pytest.mark.rule``, the ids of
@@ -38,6 +38,7 @@ import pytest
 import server_target
 from openapi_twin import Twin
 from reference_server import start, stop
+from reference_server.offer import OPTIONAL
 
 pytestmark = pytest.mark.servers
 
@@ -103,13 +104,11 @@ class Reply:
         return f"<{self.method} {self.path}: {self.status} {self.body[:400]!r}>"
 
 
-def form_data(obj: dict, parts: dict[str, bytes], *, gzip_json: bool = False) -> bytes:
-    """A ``multipart/form-data`` body: the ``json`` part, then one part per file (§6.2)."""
+def form_data(obj: dict, parts: dict[str, bytes]) -> bytes:
+    """A ``multipart/form-data`` body: the ``json`` part, plain JSON, then one part per file
+    (§6.2); no part carries a ``Content-Encoding`` (§2.12)."""
     data = json.dumps(obj).encode()
     head = 'Content-Disposition: form-data; name="json"\r\nContent-Type: application/json\r\n'
-    if gzip_json:
-        data = gzip.compress(data)
-        head += "Content-Encoding: gzip\r\n"
     chunks = [f"--{BOUNDARY}\r\n{head}\r\n".encode(), data, b"\r\n"]
     for name, content in parts.items():
         chunks += [
@@ -132,8 +131,8 @@ def parse_mixed(body: bytes, content_type: str) -> tuple[Any, dict[str, bytes]]:
         lines = head.decode("utf-8").split("\r\n")
         headers = {k.lower(): v for k, _, v in (line.partition(": ") for line in lines)}
         name = re.search(r'name="([^"]+)"', headers["content-disposition"]).group(1)
-        if headers.get("content-encoding", "").lower() == "gzip":
-            data = gzip.decompress(data)
+        # §2.12: no part carries a Content-Encoding, the json part is plain JSON
+        assert "content-encoding" not in headers, f"part {name} carries a Content-Encoding"
         if name == "json":
             obj = json.loads(data)
         else:
@@ -172,6 +171,11 @@ class Api:
             self.connection.close()
             self.connection = None
 
+    def offers(self, *calls: str) -> bool:
+        """Whether the server offers every one of *calls* (optional calls, §6.1): a case marked
+        ``offer_aware`` makes them only then, and checks the core calls on any server."""
+        return server_target.offers(self.base_url, *calls)
+
     def call(
         self,
         method: str,
@@ -184,8 +188,6 @@ class Api:
         data: bytes | None = None,
         query: str = "",
         headers: dict[str, str] | None = None,
-        gzip_body: bool = False,
-        gzip_json: bool = False,
         chunked: bool = False,
     ) -> Reply:
         sent = {"Accept": "multipart/mixed, application/json", "Accept-Encoding": "gzip"}
@@ -194,14 +196,11 @@ class Api:
         if token is not None:
             sent["Authorization"] = f"Bearer {token}"
         if parts is not None:
-            data = form_data(json_body, parts, gzip_json=gzip_json)
+            data = form_data(json_body, parts)
             sent["Content-Type"] = f"multipart/form-data; boundary={BOUNDARY}"
         elif json_body is not None:
             data = json.dumps(json_body).encode()
             sent["Content-Type"] = "application/json"
-        if data is not None and gzip_body:
-            data = gzip.compress(data)
-            sent["Content-Encoding"] = "gzip"
         if data is None and method == "POST":
             data = b""
         sent.update(headers or {})
@@ -467,10 +466,12 @@ def needs_store(store: int | None) -> int:
 
 
 @pytest.fixture(scope="module")
+@server_target.offer_aware
 def held(served, twin, store) -> SimpleNamespace:
     """What the reads look at: a project with the test T1, a release of it, two complete runs of
-    it on the board PN-1/A/SN-1 (the later one current), a lot entry, and, with an api storage,
-    a report and a library item."""
+    it on the board PN-1/A/SN-1 (the later one current); a lot entry when the server offers E15;
+    with an api storage, a report (E10, core) and a library item when the server offers L3. Only
+    the core calls otherwise (§6.1): every case using it runs on any server."""
     api = Api(served, twin)
     try:
         project = new_project(api)
@@ -484,29 +485,41 @@ def held(served, twin, store) -> SimpleNamespace:
         ok(api.call("POST", f"projects/{pid}/runs", json_body=first))
         run = run_body(tid, day=21)
         assert ok(api.call("POST", f"projects/{pid}/runs", json_body=run))["current"] is True
-        entries = {"entries": [board_entry()]}
-        ok(api.call("POST", f"projects/{pid}/boards/SN-1/entries", query=board_query(),
-                    json_body=entries))  # fmt: skip
         held = SimpleNamespace(
-            pid=pid, test_id=tid, run=run, first=first, report=None, library=None, store=store
-        )
+            pid=pid, test_id=tid, run=run, first=first, report=None, library=None, store=store,
+            base=served, lot=False,
+        )  # fmt: skip
+        if server_target.offers(served, "E15"):
+            entries = {"entries": [board_entry()]}
+            ok(api.call("POST", f"projects/{pid}/boards/SN-1/entries", query=board_query(),
+                        json_body=entries))  # fmt: skip
+            held.lot = True
         if store is not None:
             data = b"<html>kit report</html>"
             report = report_body(store, data)
             ok(api.call("POST", f"projects/{pid}/artifacts", json_body=report,
                         parts={f"sha256:{sha(data)}": data}))  # fmt: skip
+            held.report = report
+        if store is not None and server_target.offers(served, "L3"):
             archive = b"PK kit library archive " + uuid.uuid4().bytes
             item = library_body(store, archive, f"kit-held-{server_target.fresh_suffix()}")
             ok(api.call("POST", "library/config", json_body=item,
                         parts={item["archive"]["version"]: archive}))  # fmt: skip
-            held.report, held.library = report, item
+            held.library = item
         return held
     finally:
         api.close()
 
 
+def offered_calls(held: SimpleNamespace, calls: list[tuple]) -> list[tuple]:
+    """Of *calls* (each led by its id), those of the core and those the server offers (§6.1)."""
+    listed = server_target.offered(held.base)
+    return [call for call in calls if call[0] not in OPTIONAL or call[0] in listed]
+
+
 def read_calls(held: SimpleNamespace) -> list[tuple[str, str, str]]:
-    """``(name, path, query)`` of a read of every kind, each naming something *held* holds."""
+    """``(name, path, query)`` of a read of every kind the server takes, each naming something
+    *held* holds: the core reads always, an optional one when the server offers it."""
     pid, tid, rid = held.pid, held.test_id, held.run["run_id"]
     calls = [
         ("info", "info", ""),
@@ -532,9 +545,10 @@ def read_calls(held: SimpleNamespace) -> list[tuple[str, str, str]]:
         calls.append(
             ("E9", f"projects/{pid}/artifacts/report/{name}", "serial=SN-1&" + board_query())
         )
+    if held.library is not None:
         item = held.library
         calls.append(("L2", f"library/config/{seg(item['id'])}/{seg(item['version'])}", ""))
-    return calls
+    return offered_calls(held, calls)
 
 
 # ---- §9 The twin -----------------------------------------------------------------------------
@@ -555,6 +569,7 @@ def test_the_twin_is_read_whole_and_every_answer_is_checked_against_it(twin):
                 )
 
 
+@pytest.mark.offer_aware
 @pytest.mark.rule(
     "9.twin-schemas", "2.7.time-format", "3.1.no-absolute-url", "3.2.x-request-id", "3.2.date",
 )
@@ -603,8 +618,11 @@ def test_a_call_the_server_does_not_take_is_unsupported_never_not_found(api, hel
 # ---- §2.2 Unknown fields, answer fields, null ------------------------------------------------
 
 
+@pytest.mark.offer_aware
 @pytest.mark.rule("2.2.unknown-fields-kept")
 def test_a_field_the_server_does_not_know_is_kept(api, store):
+    """In a project, a file, a run, its phases and measurements, a draft, an annotation entry
+    (E7), a report (E10, E9); a board entry (E15) when the server offers it."""
     note = {"x_kit_note": "kept as sent", "x_kit_nested": {"b": [1, "two"], "a": {"c": True}}}
     pid, tid = server_target.fresh_id(), str(uuid.uuid4())
     body = project_body(pid, tid) | note
@@ -619,7 +637,7 @@ def test_a_field_the_server_does_not_know_is_kept(api, store):
     phase = {"ord": 1, "name": "Step 1", "attempt": 1, "measurements": [measurement]} | note
     run = run_body(tid, phases=[phase]) | note
     ok(api.call("POST", f"projects/{pid}/runs", json_body=run))
-    entry = {"entry_id": str(uuid.uuid4()), "kind": "comment", "key": "test", "text": "hello",
+    entry = {"entry_id": str(uuid.uuid4()), "kind": "comment", "key": "test", "text": "hi",
              "replaces": None, "by": "kit", "machine_id": MACHINE, "saved_at": now()} | note  # fmt: skip
     ok(api.call("POST", f"projects/{pid}/runs/{run['run_id']}/annotation",
                 json_body={"entries": [entry]}))  # fmt: skip
@@ -630,12 +648,13 @@ def test_a_field_the_server_does_not_know_is_kept(api, store):
     [read_entry] = got["annotation"]["entries"]
     assert {k: read_entry.get(k) for k in note} == note, read_entry
 
-    lot = board_entry() | note
-    ok(api.call("POST", f"projects/{pid}/boards/SN-1/entries", query=board_query(),
-                json_body={"entries": [lot]}))  # fmt: skip
-    board = ok(api.call("GET", f"projects/{pid}/boards/SN-1", query=board_query()))["board"]
-    [read_lot] = board["entries"]
-    assert {k: read_lot.get(k) for k in note} == note, read_lot
+    if api.offers("E15"):
+        lot = board_entry() | note
+        ok(api.call("POST", f"projects/{pid}/boards/SN-1/entries", query=board_query(),
+                    json_body={"entries": [lot]}))  # fmt: skip
+        board = ok(api.call("GET", f"projects/{pid}/boards/SN-1", query=board_query()))["board"]
+        [read_lot] = board["entries"]
+        assert {k: read_lot.get(k) for k in note} == note, read_lot
 
     text = "# T1, changed\n"
     change = {"path": "tests/T1/procedure_text.md",
@@ -675,11 +694,13 @@ def test_an_unknown_field_sent_null_reads_back_absent(api):
     assert "x_kit_gone" not in got and got.get("x_kit_deep") == deep["x_kit_deep"], got
 
 
+@pytest.mark.offer_aware
 @pytest.mark.rule("2.2.answer-fields-ignored", "2.7.time-format", "3.7.G3-one-clock")
 def test_answer_fields_a_client_sends_are_ignored_and_every_server_time_is_its_clock(api):
     """Fields the server sets (§5, *answer*) sent by a bench (no import) are ignored; the times
     the server sets are UTC seconds with ``Z``, within 3 s of the answer's ``Date`` (one clock,
-    §3.7 G3; seconds truncated)."""
+    §3.7 G3; seconds truncated). A run, its board and a release; a board entry (E15) and a
+    delete (E11) when the server offers them."""
     project = new_project(api)
     pid, tid = project.pid, project.test_id
     old = "2001-01-01T00:00:00Z"
@@ -698,14 +719,16 @@ def test_answer_fields_a_client_sends_are_ignored_and_every_server_time_is_its_c
     assert got["current"] is True and "deleted_at" not in got and "deleted_by" not in got, got
     close_to_date(got["pushed_at"], read, "pushed_at")
 
-    entry = board_entry(received_at=old, current=False)
-    ok(api.call("POST", f"projects/{pid}/boards/SN-1/entries", query=board_query(),
-                json_body={"entries": [entry]}))  # fmt: skip
+    if api.offers("E15"):
+        entry = board_entry(received_at=old, current=False)
+        ok(api.call("POST", f"projects/{pid}/boards/SN-1/entries", query=board_query(),
+                    json_body={"entries": [entry]}))  # fmt: skip
     read = api.call("GET", f"projects/{pid}/boards/SN-1", query=board_query())
     board = ok(read)["board"]
-    [stored] = board["entries"]
-    assert stored["current"] is True, stored
-    close_to_date(stored["received_at"], read, "received_at")
+    if api.offers("E15"):
+        [stored] = board["entries"]
+        assert stored["current"] is True, stored
+        close_to_date(stored["received_at"], read, "received_at")
     close_to_date(board["created_at"], read, "created_at")
 
     files = {path: f["version"] for path, f in project.files.items() if path.startswith("tests/")}
@@ -715,6 +738,8 @@ def test_answer_fields_a_client_sends_are_ignored_and_every_server_time_is_its_c
     assert ok(made)["version"] == 1, made
     close_to_date(made.json["released_at"], made, "released_at")
 
+    if not api.offers("E11"):
+        return
     deleted = api.call(
         "POST",
         f"projects/{pid}/runs/{run['run_id']}/delete",
@@ -763,8 +788,10 @@ def test_a_field_with_no_value_is_left_out_not_null(api):
 # ---- §2.4 Names ------------------------------------------------------------------------------
 
 
+@pytest.mark.offer_aware
 @pytest.mark.rule("2.4.nfc")
 def test_a_name_sent_in_another_unicode_form_is_stored_in_nfc(api, store):
+    """A test's name, a board's serial (a run's), and a report's name (E10, E8)."""
     nfc_name = f"Sé-{server_target.fresh_suffix()}"
     nfd_name = unicodedata.normalize("NFD", nfc_name)
     assert nfd_name != nfc_name
@@ -785,12 +812,12 @@ def test_a_name_sent_in_another_unicode_form_is_stored_in_nfc(api, store):
     )
     assert test["test"] == test_nfc, test
 
-    ok(api.call("POST", f"projects/{pid}/boards/{seg(nfd_name)}/entries", query=board_query(),
-                json_body={"entries": [board_entry()]}))  # fmt: skip
+    ok(api.call("POST", f"projects/{pid}/runs", json_body=run_body(tid, serial=nfd_name)))
     boards = ok(api.call("GET", f"projects/{pid}/boards"))["boards"]
     assert [b["serial"] for b in boards] == [nfc_name], boards
     board = ok(api.call("GET", f"projects/{pid}/boards/{seg(nfc_name)}", query=board_query()))
-    assert board["board"]["serial"] == nfc_name and len(board["board"]["entries"]) == 1, board
+    board = server_target.kit_tests(board)
+    assert board["board"]["serial"] == nfc_name and len(board["tests"]) == 1, board
 
     if store is not None:
         data = b"<html>nfc</html>"
@@ -802,6 +829,7 @@ def test_a_name_sent_in_another_unicode_form_is_stored_in_nfc(api, store):
         assert [a["name"] for a in listed] == ["Rapport-é.html"], listed
 
 
+@pytest.mark.offer_aware
 @pytest.mark.rule("2.4.case-first-spelling")
 def test_a_name_differing_only_by_case_answers_its_first_spelling(api, store):
     project = new_project(api)
@@ -828,11 +856,15 @@ def test_a_name_differing_only_by_case_answers_its_first_spelling(api, store):
             assert answer["artifact"]["generation"] == n + 1, answer
 
 
+@pytest.mark.offer_aware
 @pytest.mark.rule("2.4.exact-exceptions")
 def test_a_board_fields_name_and_a_never_travel_name_compare_exactly(api):
+    """A never-travel name; a board field's name when the server offers E15."""
     project = new_project(api, **{"tests/T1/__PyCache__/kit.md": text_file("kept\n")})
     files = ok(api.call("GET", f"projects/{project.pid}"))["files"]
     assert "tests/T1/__PyCache__/kit.md" in files, sorted(files)
+    if not api.offers("E15"):
+        return
     entries = [
         board_entry("field", "ACME", name="Customer"),
         board_entry("field", "other", name="customer"),
@@ -917,8 +949,10 @@ def test_a_board_name_with_a_blank_around_it_is_refused(api, held, case):
     refused(api.call(method, path, query=query, json_body=body), 400, "invalid", "bad_request")
 
 
+@pytest.mark.offer_aware
 @pytest.mark.rule("2.6.filter-matches-nothing")
 def test_a_filter_with_a_blank_around_it_matches_nothing_and_is_not_refused(api, held):
+    """E4's and E8's filters; E2's when the server offers it."""
     pid = held.pid
     boards = ok(api.call("GET", f"projects/{pid}/boards", query="part_number=PN-1"))["boards"]
     assert [b["serial"] for b in boards] == ["SN-1"], boards
@@ -928,10 +962,14 @@ def test_a_filter_with_a_blank_around_it_matches_nothing_and_is_not_refused(api,
     assert (
         ok(api.call("GET", f"projects/{pid}/boards", query="board_revision=A%20"))["boards"] == []
     )
-    found = ok(api.call("GET", "runs", query=f"project_id={pid}&serial=SN-1"))["runs"]
-    assert len(found) == 2, found
-    assert ok(api.call("GET", "runs", query=f"project_id={pid}&serial=SN-1%20"))["runs"] == []
-    assert ok(api.call("GET", "runs", query=f"project_id={pid}&part_number=%20PN-1"))["runs"] == []
+    if api.offers("E2"):
+        found = ok(api.call("GET", "runs", query=f"project_id={pid}&serial=SN-1"))
+        found = server_target.kit_runs(found)["runs"]  # less the kit's own board registration
+        assert len(found) == 2, found
+        none = ok(api.call("GET", "runs", query=f"project_id={pid}&serial=SN-1%20"))["runs"]
+        assert none == [], none
+        query = f"project_id={pid}&part_number=%20PN-1"
+        assert ok(api.call("GET", "runs", query=query))["runs"] == []
     listed = ok(api.call("GET", f"projects/{pid}/artifacts", query="serial=%20SN-1"))["artifacts"]
     assert listed == [], listed
 
@@ -1100,6 +1138,7 @@ def test_a_new_project_with_a_path_no_pc_can_hold_is_refused(api):
 # ---- §2.11 Query parameters ------------------------------------------------------------------
 
 
+@pytest.mark.offer_aware
 @pytest.mark.rule("2.11.unknown-query-param", "4.3.400-invalid")
 def test_a_query_parameter_a_call_does_not_define_is_refused(api, held):
     for name, path, query in read_calls(held):
@@ -1122,19 +1161,6 @@ def test_a_query_parameter_a_call_does_not_define_is_refused(api, held):
 # ---- §2.12 Compression and the replay digest -------------------------------------------------
 
 
-@pytest.mark.rule("2.12.gzip-whole-multipart")
-def test_a_whole_multipart_body_sent_gzipped_is_accepted(api, held, store):
-    store = needs_store(store)
-    data = b"attachment " + uuid.uuid4().bytes
-    run = run_body(held.test_id, serial="SN-gz", files=[run_file("a.bin", data, store)])
-    reply = api.call("POST", f"projects/{held.pid}/runs", json_body=run,
-                     parts={f"sha256:{sha(data)}": data}, gzip_body=True)  # fmt: skip
-    assert ok(reply)["status"] == "saved", reply
-    got = api.call("GET", f"projects/{held.pid}/runs/{run['run_id']}")
-    assert ok(got)["files"][0]["sha256"] == sha(data)
-    assert got.parts == {f"sha256:{sha(data)}": data}, got
-
-
 @pytest.mark.rule("2.12.no-gzip-multipart-answer")
 def test_a_multipart_answer_is_never_gzipped_whole(api, held, store):
     store = needs_store(store)
@@ -1151,10 +1177,26 @@ def test_a_multipart_answer_is_never_gzipped_whole(api, held, store):
     assert got.headers.get("Content-Encoding", "").lower() != "gzip", got
 
 
-@pytest.mark.rule("2.12.digest-decoded", "4.3.409-run-conflict")
+@pytest.mark.rule("2.12.plain-json-part")
+def test_no_part_of_a_multipart_answer_carries_a_content_encoding(api, held, store):
+    """The ``json`` part of a multipart answer is plain JSON and a file part its bytes, even
+    for a large JSON and a client accepting gzip (:func:`parse_mixed` checks every part)."""
+    store = needs_store(store)
+    data = b"plain part " + uuid.uuid4().bytes
+    files = [run_file(f"c{n:03}.bin", data, store) for n in range(40)]
+    run = run_body(held.test_id, serial="SN-plain", files=files)
+    ok(api.call("POST", f"projects/{held.pid}/runs", json_body=run,
+                parts={f"sha256:{sha(data)}": data}))  # fmt: skip
+    got = api.call("GET", f"projects/{held.pid}/runs/{run['run_id']}",
+                   headers={"Accept-Encoding": "gzip"})  # fmt: skip
+    assert got.headers.get("Content-Type", "").startswith("multipart/mixed"), got
+    assert ok(got)["run_id"] == run["run_id"] and got.parts == {f"sha256:{sha(data)}": data}
+
+
+@pytest.mark.rule("2.12.digest-decoded", "4.3.409-run-conflict", "E1.replay")
 def test_a_replay_is_the_same_json_whatever_its_encoding(api, held):
-    """The run's JSON sent plain, gzipped twice with other gzip headers, and as the gzipped
-    ``json`` part of a multipart body: one run, the first ``saved``, the others ``already``.
+    """The run's JSON sent gzipped twice with other gzip headers, plain, and as the ``json``
+    part of a multipart body: one run, the first ``saved``, the others ``already``.
     One byte more is another JSON: ``409 run_conflict``, kind ``corrupt``, the run unchanged."""
     run = run_body(held.test_id, serial="SN-replay")
     data = json.dumps(run).encode()
@@ -1167,7 +1209,7 @@ def test_a_replay_is_the_same_json_whatever_its_encoding(api, held):
     assert ok(api.call("POST", path, data=second, headers=json_type))["status"] == "already"
     assert ok(api.call("POST", path, data=data, headers={"Content-Type": "application/json"}))[
         "status"] == "already"  # fmt: skip
-    multipart = api.call("POST", path, json_body=run, parts={}, gzip_json=True)
+    multipart = api.call("POST", path, json_body=run, parts={})
     assert ok(multipart)["status"] == "already", multipart
     other = data + b" "
     reply = api.call("POST", path, data=other, headers={"Content-Type": "application/json"})
@@ -1239,26 +1281,28 @@ def test_a_request_without_a_valid_token_is_401_whatever_else_is_wrong(api, held
         refused(reply, 401, "auth", "invalid_token", "expired_token")
 
 
+@pytest.mark.offer_aware
 @pytest.mark.rule("2.13.parameters-before-item")
 def test_an_undefined_parameter_is_400_even_where_the_path_names_nothing_held(api, held, store):
     """§2.13 item 5 before item 7: a query parameter the call does not define is ``400``, also
-    where the item named is not held (else ``404``): a project never seen, a test, a release, a
-    run, an artifact, a library item and a blob that are not there, and P9 to a project never
-    seen."""
+    where the item named is not held (else ``404``): a project never seen, a test, a run and a
+    blob that are not there, an artifact (E9), and P9 to a project never seen; a project's tests,
+    a release and a library item when the server offers their calls."""
     gone, suffix = server_target.fresh_id(), server_target.fresh_suffix()
     pid = held.pid
     calls = [
-        (f"projects/{gone}", ""),
-        (f"projects/{gone}/tests", ""),
-        (f"projects/{pid}/tests/kit-none-{suffix}", ""),
-        (f"projects/{pid}/releases/{held.test_id}/99", ""),
-        (f"projects/{pid}/runs/{run_id()}", ""),
-        (f"projects/{pid}/artifacts/report/kit-none-{suffix}.html", f"serial=SN-1&{board_query()}"),
-        (f"library/config/kit-none-{suffix}/1.0", ""),
-    ]
+        ("P2", f"projects/{gone}", ""),
+        ("P4", f"projects/{gone}/tests", ""),
+        ("P7", f"projects/{pid}/tests/kit-none-{suffix}", ""),
+        ("P8b", f"projects/{pid}/releases/{held.test_id}/99", ""),
+        ("E3", f"projects/{pid}/runs/{run_id()}", ""),
+        ("E9", f"projects/{pid}/artifacts/report/kit-none-{suffix}.html",
+         f"serial=SN-1&{board_query()}"),
+        ("L2", f"library/config/kit-none-{suffix}/1.0", ""),
+    ]  # fmt: skip
     if store is not None:
-        calls.append((f"storages/{store}/blobs/{gone}/{'3' * 64}", ""))
-    for path, query in calls:
+        calls.append(("B2", f"storages/{store}/blobs/{gone}/{'3' * 64}", ""))
+    for _call, path, query in offered_calls(held, calls):
         reply = api.call("GET", path, query="&".join(q for q in (query, "kit_unknown=1") if q))
         assert reply.status == 400, f"{path}: {reply}"
         refused(reply, 400, "invalid", "bad_request")
@@ -1268,21 +1312,23 @@ def test_an_undefined_parameter_is_400_even_where_the_path_names_nothing_held(ap
     refused(reply, 400, "invalid", "bad_request")
 
 
+@pytest.mark.offer_aware
 @pytest.mark.rule("2.13.role-before-item")
 def test_a_login_the_call_is_not_for_is_403_even_where_nothing_named_is_held(api, held, store):
     """§2.13 item 6 before item 7: a login whose roles do not allow the call is ``403``, also
-    where what it names does not exist (else ``404``): a bench deleting, restoring, purging what
-    is not there; the manager writing to a project never seen, its release, a storage not held."""
+    where what it names does not exist (else ``404``): the manager writing to a project never
+    seen, its release, a storage not held; a bench deleting, restoring, purging what is not
+    there, when the server offers those calls."""
     gone, tid, missing_run = server_target.fresh_id(), str(uuid.uuid4()), run_id()
     artifact = {"kind": "report", "serial": "SN-1", "part_number": "PN-1", "board_revision": "A",
                 "name": f"kit-none-{server_target.fresh_suffix()}.html"}  # fmt: skip
     managers = [
-        (f"projects/{held.pid}/runs/{missing_run}/delete", {"reason": "kit"}),
-        (f"projects/{gone}/runs/{missing_run}/restore", {}),
-        (f"projects/{gone}/artifacts/delete", {**artifact, "reason": "kit"}),
-        (f"projects/{gone}/purge", {}),
+        ("E11", f"projects/{held.pid}/runs/{missing_run}/delete", {"reason": "kit"}),
+        ("E11", f"projects/{gone}/runs/{missing_run}/restore", {}),
+        ("E12", f"projects/{gone}/artifacts/delete", {**artifact, "reason": "kit"}),
+        ("E13", f"projects/{gone}/purge", {}),
     ]
-    for path, body in managers:
+    for _call, path, body in offered_calls(held, managers):
         reply = api.call("POST", path, json_body={"machine_id": MACHINE, **body})
         refused(reply, 403, "denied", "not_a_manager")
     change = {"path": "tests/T1/kit.md", "replaces": None} | text_file("never written\n")
@@ -1304,6 +1350,7 @@ def test_a_login_the_call_is_not_for_is_403_even_where_nothing_named_is_held(api
 # ---- §3.1 Address --------------------------------------------------------------------------
 
 
+@pytest.mark.offer_aware
 @pytest.mark.parametrize("slash", [True, False], ids=["with", "without"])
 @pytest.mark.rule("3.1.base-slash")
 def test_the_key_calls_answer_on_the_base_with_or_without_its_trailing_slash(
@@ -1321,27 +1368,35 @@ def test_the_key_calls_answer_on_the_base_with_or_without_its_trailing_slash(
         api.close()
 
 
+@pytest.mark.offer_aware
 @pytest.mark.rule("3.1.opaque-continuation")
 def test_a_cursor_and_a_token_are_taken_back_verbatim(api, store):
+    """E2's cursor and P3's change token, each when the server offers that call; E8's."""
     project = new_project(api)
     pushed = []
     for day in (10, 11, 12):
         run = run_body(project.test_id, day=day)
         ok(api.call("POST", f"projects/{project.pid}/runs", json_body=run))
         pushed.append(run["run_id"])
-    seen, cursor = [], None
-    for _ in range(10):
-        query = f"project_id={project.pid}&limit=1" + (
-            f"&cursor={quote(cursor, safe='')}" if cursor else ""
-        )
-        page = ok(api.call("GET", "runs", query=query))
-        assert len(page["runs"]) <= 1, page
-        seen += [r["run_id"] for r in page["runs"]]
-        cursor = page["cursor"]
-        if cursor is None:
-            break
-        assert isinstance(cursor, str) and cursor, page
-    assert seen == sorted(pushed, reverse=True), seen
+    if api.offers("P3"):
+        token = ok(api.call("GET", f"projects/{project.pid}"))["token"]
+        since = ok(api.call("GET", f"projects/{project.pid}",
+                            query=f"since={quote(token, safe='')}"))  # fmt: skip
+        assert since["files"] == {} and since.get("deleted", []) == [], since
+    if api.offers("E2"):
+        seen, cursor = [], None
+        for _ in range(10):
+            query = f"project_id={project.pid}&limit=1" + (
+                f"&cursor={quote(cursor, safe='')}" if cursor else ""
+            )
+            page = server_target.kit_runs(ok(api.call("GET", "runs", query=query)))
+            assert len(page["runs"]) <= 1, page
+            seen += [r["run_id"] for r in page["runs"]]
+            cursor = page["cursor"]
+            if cursor is None:
+                break
+            assert isinstance(cursor, str) and cursor, page
+        assert seen == sorted(pushed, reverse=True), seen
 
     if store is not None:
         names = []
@@ -1361,10 +1416,6 @@ def test_a_cursor_and_a_token_are_taken_back_verbatim(api, store):
                 break
         assert seen == names, seen
 
-    token = ok(api.call("GET", f"projects/{project.pid}"))["token"]
-    since = ok(api.call("GET", f"projects/{project.pid}", query=f"since={quote(token, safe='')}"))
-    assert since["files"] == {} and since.get("deleted", []) == [], since
-
 
 SEGMENT_SERIAL = "A/B #+ é?x%y"
 SEGMENT_PART = "P+Q/R #2"
@@ -1373,15 +1424,17 @@ SEGMENT_PART = "P+Q/R #2"
 @pytest.mark.rule("3.1.segment-decoding", "3.1.query-plus")
 def test_a_name_holding_slash_hash_plus_and_blanks_reaches_the_server_as_one_name(api):
     project = new_project(api)
-    path = f"projects/{project.pid}/boards/{seg(SEGMENT_SERIAL)}/entries"
-    ok(api.call("POST", path, query=board_query(SEGMENT_PART, "r+1"),
-                json_body={"entries": [board_entry()]}))  # fmt: skip
+    run = run_body(project.test_id, serial=SEGMENT_SERIAL, part_number=SEGMENT_PART,
+                   board_revision="r+1")  # fmt: skip
+    ok(api.call("POST", f"projects/{project.pid}/runs", json_body=run))
     boards = ok(api.call("GET", f"projects/{project.pid}/boards"))["boards"]
     assert [(b["serial"], b.get("part_number"), b.get("board_revision")) for b in boards] == [
         (SEGMENT_SERIAL, SEGMENT_PART, "r+1")], boards  # fmt: skip
     read = ok(api.call("GET", f"projects/{project.pid}/boards/{seg(SEGMENT_SERIAL)}",
                        query=board_query(SEGMENT_PART, "r+1")))  # fmt: skip
-    assert read["board"]["serial"] == SEGMENT_SERIAL and len(read["board"]["entries"]) == 1, read
+    read = server_target.kit_tests(read)
+    assert read["board"]["serial"] == SEGMENT_SERIAL, read
+    assert [t["pointer"]["run_id"] for t in read["tests"]] == [run["run_id"]], read
     # A literal "+" in a query value is a plus, never a blank.
     plus = ok(api.call("GET", f"projects/{project.pid}/boards",
                        query="part_number=P+Q/R%20%232&board_revision=r+1"))  # fmt: skip
@@ -1446,6 +1499,7 @@ def test_a_token_anywhere_but_the_authorization_header_is_no_token(api):
     refused(in_cookie, 401, "auth", "invalid_token")
 
 
+@pytest.mark.offer_aware
 @pytest.mark.rule("3.5.every-login-reads")
 def test_every_login_reads_whatever_its_roles(api, held):
     for name, path, query in read_calls(held):
@@ -1701,8 +1755,13 @@ def test_a_reference_to_bytes_not_there_is_409_missing_files_and_nothing_is_writ
     refused(
         api.call("GET", f"projects/{held.pid}/runs/{run['run_id']}"), 404, "not_found", "not_found"
     )
-    boards = ok(api.call("GET", f"projects/{held.pid}/boards"))["boards"]
-    assert "SN-missing" not in [b["serial"] for b in boards], boards
+    board = ok(api.call("GET", f"projects/{held.pid}/boards/SN-missing", query=board_query()))
+    assert server_target.kit_tests(board)["tests"] == [], ("a refused run is listed", board)
+    # On a server registering its boards the board may be the kit's own (a refusal for the
+    # board alone came first, server_target.BoardSeeds): E4 lists it there.
+    if not server_target.seeds_boards():
+        boards = ok(api.call("GET", f"projects/{held.pid}/boards"))["boards"]
+        assert "SN-missing" not in [b["serial"] for b in boards], boards
 
 
 @pytest.mark.rule("4.3.409-invalid", "4.4.details")
@@ -1729,11 +1788,15 @@ def test_a_release_conflict_is_409_with_what_the_server_holds(api):
     assert held_now.get("tests/T1/procedure_text.md") == files["tests/T1/procedure_text.md"], error
 
 
+@pytest.mark.offer_aware
 @pytest.mark.rule("4.3.409-invalid", "4.4.details")
 def test_a_project_or_library_version_held_already_is_409(api, store):
+    """A project (P11); a library version (L3) when the server offers it."""
     project = new_project(api)
     again = project_body(project.pid, project.test_id)
     refused(api.call("POST", "projects", json_body=again), 409, "invalid", "exists")
+    if not api.offers("L3"):
+        return
     store = needs_store(store)
     archive = b"PK first " + uuid.uuid4().bytes
     item = library_body(store, archive, f"kit-ver-{server_target.fresh_suffix()}")
@@ -1827,6 +1890,29 @@ def test_a_part_over_one_mib_is_400_naming_it_in_large(api, held, store):
     refused(
         api.call("GET", f"projects/{held.pid}/runs/{run['run_id']}"), 404, "not_found", "not_found"
     )
+
+
+@pytest.mark.rule("4.5.refusal-inside-200")
+def test_a_change_made_on_the_server_meanwhile_is_200_changed_not_an_error(api):
+    """P9: a change naming a version the server no longer holds answers ``200`` with that
+    change ``changed`` (its ``current`` what the server holds), and the other changes apply."""
+    project = new_project(api)
+    held = project.files["tests/T1/procedure_text.md"]
+    first = {"path": "tests/T1/procedure_text.md", "replaces": held["version"]} | text_file(
+        "# T1, first\n"
+    )
+    assert [r["status"] for r in ok(changes_of(api, project.pid, [first]))["results"]] == ["saved"]
+    stale = {"path": "tests/T1/procedure_text.md", "replaces": held["version"]} | text_file(
+        "# T1, stale\n"
+    )
+    new = {"path": f"tests/T1/kit-{server_target.fresh_suffix()}.md", "replaces": None} | text_file(
+        "new\n"
+    )
+    reply = changes_of(api, project.pid, [stale, new])
+    assert reply.status == 200, reply
+    results = ok(reply)["results"]
+    assert [r["status"] for r in results] == ["changed", "saved"], results
+    assert results[0]["current"]["version"] == first["version"], results
 
 
 @pytest.mark.rule("4.5.refusal-inside-200")

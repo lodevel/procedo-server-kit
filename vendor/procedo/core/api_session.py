@@ -20,6 +20,8 @@ from .evidence_api_http import (
     ApiEndpoint,
     ApiWire,
     active_store,
+    boards_registered,
+    offered_calls,
     require_json_api,
 )
 from .evidence_store import OpContext
@@ -37,6 +39,8 @@ class ApiSession:
         self._lock = threading.Lock()
         self._limits: dict[str, Any] | None = None
         self._roles: frozenset[str] = frozenset()
+        self._calls: frozenset[str] = frozenset()
+        self._boards_registered = False
         self._store_id: int | None = None
 
     def operation(self, ctx: OpContext | None) -> AbstractContextManager[Any]:
@@ -54,6 +58,8 @@ class ApiSession:
                 limits = info.get("limits")
                 user = info.get("user") if isinstance(info.get("user"), dict) else {}
                 self._roles = frozenset(str(r) for r in user.get("roles") or [])
+                self._calls = offered_calls(info)
+                self._boards_registered = boards_registered(info)
                 self._limits = limits if isinstance(limits, dict) else {}
 
     def call(self, op: str, method: str, *segments: str | int, **kwargs: Any) -> Answer:
@@ -65,6 +71,20 @@ class ApiSession:
         """This login's roles, as ``/info`` names them (``user.roles``, ``data_format.md`` §5.3)."""
         self.ready()
         return self._roles
+
+    def offered(self) -> frozenset[str]:
+        """The optional calls this server offers, by their ids (``/info``'s ``calls``, contract
+        §6.1): every core call besides. Kept for the features that need one; nothing reads it
+        yet."""
+        self.ready()
+        return self._calls
+
+    def boards_registered(self) -> bool:
+        """Whether the server registers its boards itself (``/info``'s ``boards_registered``,
+        contract §3.3): a bench then picks a board from E4's list only. Kept for that choice;
+        nothing reads it yet."""
+        self.ready()
+        return self._boards_registered
 
     def limit(self, name: str) -> int | None:
         """A limit ``/info`` publishes (``max_upload_bytes``, ``max_file_bytes``); ``None`` when

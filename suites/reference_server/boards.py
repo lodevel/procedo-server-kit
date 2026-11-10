@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 
+from . import offer, registration
 from .call import Answer, Call
 from .entries import (
     add_entries,
@@ -35,7 +36,7 @@ def board_answer(state: State, project: Project, board: Board, *, with_entries: 
     if lot is not None:
         obj["lot"] = lot
     obj["details"] = details
-    if with_entries:
+    if with_entries or state.broken("E4.list"):  # the fault: E4 lists each with its entries
         obj["entries"] = entries_answer(board.entries, board_group)
     obj["created_at"] = board.created_at
     ended = [
@@ -46,7 +47,10 @@ def board_answer(state: State, project: Project, board: Board, *, with_entries: 
         and run.obj.get("ended")
     ]
     if ended:
-        obj["last_ended"] = max(ended)
+        # the fault: deleted runs counted, and the newest run pushed taken, not the latest ended
+        newest = [r.obj["ended"] for r in project.runs.values() if r.obj.get("ended") in ended]
+        broken = state.broken("5.11.board-times")
+        obj["last_ended"] = newest[-1] if broken else max(ended)
     return obj
 
 
@@ -74,7 +78,12 @@ def list_boards(call: Call) -> Answer:
             if not state.broken("E4.order")
             else (lambda k: _spelled(project.boards[k]))
         )
+        run_boards = {run.board_key for run in project.runs.values()}
         for key in sorted(project.boards, key=order):
+            if not registration.listed(state, project.project_id, key):
+                continue  # §3.3: on a server registering its boards, the registered ones only
+            if key not in run_boards and state.broken("E4.registered-listed"):
+                continue  # the fault: a board no run was pushed to is not listed
             if by_part and key[0] != part:
                 continue
             if by_revision and key[1] != revision:
@@ -160,8 +169,18 @@ def save_entries(call: Call) -> Answer:
     importing = call.importing()
     entries = entries_of(body, validate_board_entry)
     check_received(entries, importing=importing)
-    project = state.ensure_project(call.params["project_id"], None)
+    project_id = call.params["project_id"]
+    key = board_key(part_number, revision, serial)
+    if not importing:
+        offer.note(offer.BENCH_RUN)
+    # §3.3: a bench's entry on a board that is not registered is refused, never an import's
+    if not importing or state.broken("3.3.import-any-call"):  # the fault: an import checked
+        let_through = state.broken("E15.unknown-board")
+        registration.check(state, project_id, key, serial, let_through=let_through)
+    project = state.ensure_project(project_id, None)
     board = state.ensure_board(project, serial, part_number, revision)
+    if importing and not state.broken("3.3.import-registers"):  # its board is the server's
+        registration.register(state, project_id, board.key)
     group = board_group_folded if state.broken("5.11.field-name-exact") else board_group
     results = add_entries(state, board.entries, entries, group, importing=importing)
     for entry in entries:

@@ -9,7 +9,8 @@ nothing but pytest:
   content type) and checks a JSON value against it: the JSON Schema keywords the twin uses
   (``type``, ``enum``, ``const``, ``pattern``, ``minimum``, ``minLength``, ``required``,
   ``properties``, ``additionalProperties``, ``patternProperties``, ``propertyNames``,
-  ``items``, ``allOf``, ``oneOf``, ``anyOf``, ``if``/``then``/``else``, ``$ref``); any other
+  ``items``, ``uniqueItems``, ``allOf``, ``oneOf``, ``anyOf``, ``if``/``then``/``else``,
+  ``$ref``); any other
   validation keyword in the twin fails :meth:`Twin.check_keywords`.
 
 In the kit the twin sits beside this module; in the repository it is ``docs/plans/``.
@@ -352,8 +353,8 @@ def load_yaml(text: str) -> Any:
 #: The validation keywords :meth:`Twin.errors` applies.
 APPLIED = {
     "$ref", "type", "enum", "const", "pattern", "minimum", "maximum", "minLength", "maxLength",
-    "minItems", "required", "properties", "additionalProperties", "patternProperties",
-    "propertyNames", "items", "allOf", "oneOf", "anyOf", "if", "then", "else",
+    "minItems", "uniqueItems", "required", "properties", "additionalProperties",
+    "patternProperties", "propertyNames", "items", "allOf", "oneOf", "anyOf", "if", "then", "else",
 }  # fmt: skip
 #: Keywords that only annotate (JSON Schema 2020-12 and OpenAPI): nothing to check.
 ANNOTATIONS = {
@@ -486,6 +487,10 @@ class Twin:
         if isinstance(value, list):
             if len(value) < schema.get("minItems", 0):
                 out.append(f"{where}: fewer than {schema['minItems']} items")
+            if schema.get("uniqueItems") is True:
+                seen = [json.dumps(item, sort_keys=True) for item in value]
+                if len(set(seen)) < len(seen):
+                    out.append(f"{where}: an item listed twice")
             if "items" in schema:
                 for n, item in enumerate(value):
                     out += self.errors(item, schema["items"], f"{where}[{n}]")

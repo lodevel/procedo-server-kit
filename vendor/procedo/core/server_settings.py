@@ -45,7 +45,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from . import app_settings, evidence_config, project_location
+from . import app_settings, evidence_config, project_location, server_certificate
 from .evidence_config import StoreType
 from .evidence_store import (
     REGISTRY,
@@ -67,15 +67,19 @@ __all__ = [
     "address_params",
     "address_text",
     "available_types",
+    "certificate_line",
     "chosen",
     "database",
     "has_folder",
+    "is_certificate_line",
     "locations",
     "matches_origin",
+    "name_of",
     "named",
     "names_problem",
     "not_offered_note",
     "place_label",
+    "same_server_problem",
     "server_for",
     "servers",
     "set_servers",
@@ -128,11 +132,30 @@ def set_servers(found: list[Server]) -> None:
     """Replace the list. Merge-safe like every other machine setting, and RAISING: a
     list with a nameless server or two of one name is refused, and a caller that
     reports "saved" having stored nothing is the one outcome this refuses."""
-    problem = names_problem([server.name for server in found])
+    problem = names_problem([server.name for server in found]) or same_server_problem(found)[1]
     if problem:
         raise EvidenceError("invalid", problem)
     stored = [{"name": server.name.strip(), **copy.deepcopy(server.spec)} for server in found]
     app_settings.update_app_settings(lambda data: data.update({SECTION: stored}))
+    server_certificate.remember(found)  # the connections of this process follow at once
+
+
+def same_server_problem(found: list[Server]) -> tuple[int, str]:
+    """``(row, why)`` for the first server that is another one again: a type with no folder
+    (the web server) on an address an earlier one has. One server, one entry: its sign-in, and
+    this PC's choices for it (Accept any certificate), are one. ``(-1, "")``: none."""
+    seen: dict[tuple[str, str], str] = {}
+    for row, server in enumerate(found):
+        key = credential_key(server.spec) if not has_folder(server.backend) else ""
+        if not key:
+            continue
+        first = seen.setdefault((server.backend, key), server.name.strip())
+        if first != server.name.strip():
+            return row, (
+                f"{first} and {server.name.strip()} are the same server "
+                f"({address_label(server.spec)}). Keep one of them."
+            )
+    return -1, ""
 
 
 def names_problem(names: list[str]) -> str:
@@ -317,9 +340,9 @@ def sign_in_label(backend: str, key: str) -> str:
     """A saved sign-in's key the way a person reads it: the name of this PC's server
     it serves, else its address (an https server as https, never the ``http://`` its
     key is spelled with), else the key itself."""
-    for server in servers():
-        if server.backend == backend and credential_key(server.spec) == key:
-            return server.name
+    name = name_of(backend, key)
+    if name:
+        return name
     params = getattr(REGISTRY.get(backend), "credential_params", lambda _key: {})(key)
     return address_label({"backend": backend, "params": params}) if params else key
 
@@ -335,8 +358,37 @@ SETTINGS_APP = "Procedo Bench"
 
 def in_settings_app(text: str) -> str:
     """*text* as an app without machine settings of its own (Procedo Studio) says it: every
-    ``Settings ▸ Server`` or ``Settings ▸ Database`` names the app that keeps them."""
+    ``Settings ▸ Server`` or ``Settings ▸ Database`` names the app that keeps them, and a
+    rejected certificate's "what to do" says where its settings are
+    (:func:`server_certificate.in_settings_app`)."""
+    text = server_certificate.in_settings_app(text)
     return re.sub(r"Settings ▸ (Server|Database)", rf"Settings ▸ \1 (in {SETTINGS_APP})", text)
+
+
+def certificate_line(name: str, err: object) -> str:
+    """``<name> refused: its certificate is not trusted (self-signed). See File › Settings… ›
+    Server.``: what Bench's footer says when *err* is a rejected certificate of the server
+    called *name* (``""`` for any other failure)."""
+    refusal = server_certificate.certificate_refusal(err)
+    if refusal is None:
+        return ""
+    return f"{name or 'The server'} refused: {refusal.short}{_CERTIFICATE_LINE_END}"
+
+
+_CERTIFICATE_LINE_END = ". See File › Settings… › Server."
+
+
+def is_certificate_line(text: str) -> bool:
+    """Whether *text* is a :func:`certificate_line` (what a later success takes down)."""
+    return " refused: its certificate " in text and text.endswith(_CERTIFICATE_LINE_END)
+
+
+def name_of(backend: str, key: str) -> str:
+    """The name of this PC's server of *backend* whose sign-in key is *key*, ``""`` for none."""
+    for server in servers():
+        if server.backend == backend and credential_key(server.spec) == key:
+            return server.name
+    return ""
 
 
 def sign_in_kept_note(page: str = "Server") -> str:

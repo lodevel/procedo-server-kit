@@ -13,6 +13,12 @@ info:
     Rules a server developer reads first (data_format.md §1):
 
     - GET reads, POST writes; nothing else.
+    - Core and optional calls (contract §6.1): every server takes `/info`, S1, P1, P2, P2b, P7,
+      P9, P10, P11, E1, E3, E4, E5, E7, E8, E9, E10, B1 and B2. Every other call is optional: a
+      server lists those it offers in `/info`'s `calls`, and answers each one it does not list
+      `501 unsupported`, kind `invalid`. Without P3 every change token is `""`; with U1 a run's
+      `operator` and a release's `released_by` name one of the server's users (`409
+      unknown_operator`).
     - JSON carries the structure. A file is a reference `{version|sha256, size, store_id}` to a
       storage (`GET /storages`). For a storage whose backend is `api`, the bytes are binary
       parts of the SAME request (`multipart/form-data`) or answer (`multipart/mixed`), each part
@@ -68,10 +74,11 @@ info:
       (data_format.md §4.3–§4.5, §4.13).
     - The transport is `web_api_spec.md`: base address and prefix (§3.0), /info (§3.1), bearer
       auth (§6), TLS, timeouts, persistent connections (§7), the error envelope (§5),
-      `X-Bench-Store: v1` and `X-Request-Id` on every answer, gzip on JSON (a multipart body's
-      JSON part may carry its own `Content-Encoding: gzip`). A reverse proxy in front streams a
-      request's body to the API as it arrives (the answer to an upload within 30 s of its last
-      byte) and starts each answer within 30 s (contract §3.6).
+      `X-Bench-Store: v1` and `X-Request-Id` on every answer, gzip on a plain JSON body (a
+      multipart body never carries a `Content-Encoding`, as a whole or a part: its JSON part is
+      plain JSON). A reverse proxy in front streams a request's body to the API as it arrives
+      (the answer to an upload within 30 s of its last byte) and starts each answer within 30 s
+      (contract §3.6).
 servers:
   - url: "{base}api/v1"
     description: The configured base address, normalized to one trailing slash, plus api/v1.
@@ -101,10 +108,13 @@ paths:
       tags: [server]
       operationId: getInfo
       summary: Discovery (web_api_spec.md §3.1)
-      description: Also tells the app this login's roles (`bench`, `publisher`, `importer`, `manager`, `reader`).
+      description: |
+        Also tells the app this login's roles (`bench`, `publisher`, `importer`, `manager`,
+        `reader`) and the optional calls this server offers (`calls`, contract §6.1): an optional
+        call it does not list answers `501 unsupported`, kind `invalid`.
       responses:
         "200":
-          description: The server's name, its API versions, its clock, its limits and this login.
+          description: The server's name, its API versions, its clock, its limits, its optional calls and this login.
           headers:
             X-Bench-Store: {$ref: "#/components/headers/XBenchStore"}
             X-Request-Id: {$ref: "#/components/headers/XRequestId"}
@@ -306,6 +316,26 @@ paths:
                     items: {$ref: "#/components/schemas/Bench"}
         default: {$ref: "#/components/responses/Error"}
 
+  /users:
+    get:
+      tags: [server]
+      operationId: listUsers
+      summary: U1 - the server's active users (optional, contract §6.8)
+      description: |
+        The users the server lets work now, ordered by `display_name`, then by `name`, each
+        compared by case folding. A server listing U1 in `/info`'s `calls` refuses a run whose
+        `operator` (E1) or a release whose `released_by` (P10) is none of these names (compared
+        by case folding) with `409 unknown_operator`, kind `invalid`, nothing written; an absent
+        name, an import (`"import": true`) and a replay of a stored run are not checked. No
+        parameter: any is `400 bad_request`.
+      responses:
+        "200":
+          description: The active users.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UserList"}
+        default: {$ref: "#/components/responses/Error"}
+
   /projects:
     get:
       tags: [projects]
@@ -375,7 +405,10 @@ paths:
         test_id whose releases changed (one made or imported) with its whole list now. Any token
         the server cannot answer from is `410 gone`; an empty `since`, `400`. A project known only
         by its evidence: `404`. A working copy reads on from the token of its last read (P2, P3),
-        never from the token P9 answers.
+        never from the token P9 answers. P3 is optional (contract §6.1): a server not listing it
+        in `/info`'s `calls` answers `since` with `501 unsupported`, and answers every change
+        token empty (P1, P2, P2b, P4, P5, P6, P9, P11), so the app reads the whole project at
+        each sync; a server listing it answers every token non-empty.
       parameters:
         - $ref: "#/components/parameters/Have"
         - name: since
@@ -628,7 +661,8 @@ paths:
       summary: P10 - release the test that holds this test id; the server gives the number
       description: |
         The test released is the one whose `test.json` holds the path's `test_id` (none: `404
-        not_found`). `files` names the version of each file released, and only those are kept,
+        not_found`). On a server offering U1, a `released_by` none of its users is `409
+        unknown_operator` (not for an import). `files` names the version of each file released, and only those are kept,
         by their names in the test (a path under `tests/<test>/` less that folder, a
         `functions/` path whole; two taking one name: `400`). `409 changed` when a named file
         version is no longer the server's (details.current has the test's documents now,
@@ -743,8 +777,15 @@ paths:
         under the same id is `409 run_conflict`, kind `corrupt`; a run_id a manager purged is
         `409 deleted`), file it under its `test_id` and apply the pointer rule to that test
         id's mark on the board. A format-2 run with `lot` is `400
-        bad_request`. With `"import": true` (importer role, data_format.md §6.10) the run keeps
-        the `pushed_at` sent and moves no pointer; everything else is checked as for a bench.
+        bad_request`. On a server offering U1, an `operator` none of its users is `409
+        unknown_operator`, nothing written (not for an import, nor a replay); on a server whose
+        /info says `boards_registered: true`, a run on a board E4 does not list is `409
+        unknown_board`, likewise. With `"import": true` (importer role, data_format.md §6.10) the run keeps
+        the `pushed_at` sent and, on a server offering E6, moves no pointer (on one not offering
+        E6 it moves the pointer by the pointer rule, a tie going to the greater run_id: contract
+        rule import.E1-rule-without-E6); everything else is checked as for a bench, but never
+        whether the board is registered (an import is taken on any board, whose new board
+        becomes registered: `409 unknown_board` is never an import's, contract §6.7).
 
         Parts: one that no api-stored file names is ignored; two with one name, or one whose
         size is not its file's, `400 bad_request`; one whose bytes do not match its name,
@@ -941,9 +982,11 @@ paths:
         the name typed (`deleted_by_name`) are kept as `deleted_station` and `deleted_by_name`;
         `deleted_by` is the login. Deleting a deleted run is a replay: `200`, unchanged (the
         first reason stays), no `pointer`. With `"import": true` (importer role) the delete
-        keeps the `deleted_*` fields sent and hands nothing on: a pointer naming the run keeps
-        naming it (E5 answers it so, the run's `current` stays true) until the importer sets it
-        (E6) or a purge hands it on. A `station` or `deleted_by_name` of `""`: `400
+        keeps the `deleted_*` fields sent; on a server offering E6 it hands nothing on: a
+        pointer naming the run keeps naming it (E5 answers it so, the run's `current` stays
+        true) until the importer sets it (E6) or a purge hands it on. On a server not offering
+        E6 it hands the pointer on as a bench's delete does (contract rule
+        import.delete-hands-on-without-E6). A `station` or `deleted_by_name` of `""`: `400
         bad_request`, nothing deleted.
       requestBody:
         required: true
@@ -1000,7 +1043,9 @@ paths:
         part number, its serial list with both. Ordered by part number, then revision, then
         serial, each ascending by case folding, "none" first. A board is never removed: one
         whose runs are all deleted is still listed. A project the server never saw has no
-        boards.
+        boards. On a server whose /info says `boards_registered: true` (contract §3.3), E4
+        lists exactly the registered boards, before their first run too, and no other: a
+        board its administrator unregisters is no longer listed.
       parameters:
         - {name: part_number, in: query, schema: {type: string}}
         - {name: board_revision, in: query, schema: {type: string}}
@@ -1175,7 +1220,9 @@ paths:
         satisfied: `saved` with `{test_id, run_id: null}`, nothing written, whatever `replaces`
         says. With
         `"import": true` (importer role, data_format.md §6.10) the pointer is set exactly as
-        sent (`run_id`, `ended`, `machine_id`, `updated_at`), `replaces` not checked. A path
+        sent (`run_id`, `ended`, `machine_id`, `updated_at`), `replaces` not checked (a server
+        not offering E6 has no such call: imported runs move its pointers by the pointer rule,
+        contract rule import.E1-rule-without-E6). A path
         test_id that is not a lower-case UUID is `400 bad_request`, before the project is
         looked at.
       requestBody:
@@ -1208,8 +1255,11 @@ paths:
         was the current entry for its kind and name, or there was none; `changed` when someone
         saved that kind and name meanwhile (the entry is kept, not current; the current one is
         answered so the app can offer to apply it); `already` for an entry_id held (a replay).
-        The board is created when it is new, so a lot can be entered before its first run. With
-        `"import": true` (importer role, data_format.md §6.10) each entry keeps its `received_at`.
+        The board is created when it is new, so a lot can be entered before its first run. On a
+        server whose /info says `boards_registered: true` (contract §3.3), a bench's entry on a
+        board that is not registered is `409 unknown_board`, kind `invalid`, nothing written. With
+        `"import": true` (importer role, data_format.md §6.10) each entry keeps its `received_at`,
+        and is taken on any board, whose new board becomes registered.
       requestBody:
         required: true
         content:
@@ -1222,6 +1272,7 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/BoardEntryResult"}
         "400": {$ref: "#/components/responses/BadRequest"}
+        "409": {$ref: "#/components/responses/Conflict"}
         default: {$ref: "#/components/responses/Error"}
 
   /projects/{project_id}/artifacts:
@@ -1308,8 +1359,11 @@ paths:
         else `changed` with the current one; a draft equal to the one held is `already`; with
         none held it is `saved` whatever its `replaces`. `409 deleted` for a name a manager
         deleted (a bench cannot undo a delete), except a push equal to that name's newest
-        generation: a replay, `already`. The first report or draft of a board creates the board.
-        An export has `serial: ""`; a report or draft has a serial (else `400 bad_request`).
+        generation: a replay, `already`. The first report or draft of a board creates the board;
+        on a server whose /info says `boards_registered: true` (contract §3.3), a bench's report
+        or draft (not a replay) on a board that is not registered is `409 unknown_board`, kind
+        `invalid`, nothing written, and an import is taken on any board, whose new board becomes
+        registered. An export has `serial: ""`; a report or draft has a serial (else `400 bad_request`).
         With `"import": true` (importer role, data_format.md §6.10) a report or export keeps the
         `generation` sent; one the name holds with another file or info is `409 changed`,
         `details.current` the Artifact holding it.
@@ -1702,12 +1756,19 @@ components:
         (invalid; details.current), `same_as_release` (invalid; details.version), `deleted`
         (invalid: an artifact pushed to a name a manager deleted, a run a manager purged, an
         entry for a deleted run), `version_exists` (invalid; details.content_sha256), `exists`
-        (invalid: P11, a project with that id or name is held; L3, a case-only twin).
+        (invalid: P11, a project with that id or name is held; L3, a case-only twin),
+        `unknown_operator` (invalid: on a server offering U1, E1's `operator` or P10's
+        `released_by` is none of its users; contract §6.8), `unknown_board` (invalid: on a
+        server whose /info says `boards_registered: true`, E1, E10 or E15 on a board that is not
+        registered, which E4 does not list). A
+        server may refuse one entry by a rule of its own with `409` and any other code of its own
+        (`unknown_project`, `unknown_test`, …), kind `invalid`: the outbox sets that entry aside
+        and goes on.
       content:
         application/json:
           schema: {$ref: "#/components/schemas/ErrorEnvelope"}
     Gone:
-      description: "`gone`: the server cannot answer from the `since` token (too old, another server's, never given, unreadable; kind `not_found`); open the project in full."
+      description: "`gone`: the server cannot answer from the `since` token (too old, another server's, never given, unreadable; kind `not_found`); open the project in full. A server without P3 never answers it (its tokens are empty)."
       content:
         application/json:
           schema: {$ref: "#/components/schemas/ErrorEnvelope"}
@@ -1898,7 +1959,7 @@ components:
         project_id: {$ref: "#/components/schemas/ProjectId"}
         name: {type: string, description: "The project's folder name: one name every PC creates (data_format.md §4.2)."}
         path: {type: string, readOnly: true, description: "Its `name` as first stored, in NFC (P1 only)."}
-        token: {type: string, readOnly: true}
+        token: {type: string, readOnly: true, description: "The change token, opaque: non-empty on a server offering P3, the empty string on one that does not (the app then reads the whole project at each sync and never sends `since`)."}
         updated:
           allOf: [{$ref: "#/components/schemas/Time"}]
           readOnly: true
@@ -2023,7 +2084,7 @@ components:
       type: object
       required: [token, tests]
       properties:
-        token: {type: string}
+        token: {type: string, description: "As the Project's: empty on a server not offering P3."}
         tests:
           type: array
           items: {$ref: "#/components/schemas/Test"}
@@ -2031,7 +2092,7 @@ components:
       type: object
       required: [token, tests]
       properties:
-        token: {type: string}
+        token: {type: string, description: "As the Project's: empty on a server not offering P3."}
         tests:
           type: object
           additionalProperties: {$ref: "#/components/schemas/Test"}
@@ -2187,7 +2248,7 @@ components:
       type: object
       required: [token, results]
       properties:
-        token: {type: string}
+        token: {type: string, description: "As the Project's: empty on a server not offering P3."}
         results:
           type: array
           items:
@@ -3040,9 +3101,10 @@ components:
       type: object
       description: |
         A multipart body (multipart/form-data up, multipart/mixed down; data_format.md §3.3).
-        The first part, named `json`, is the object (application/json, possibly with its own
-        `Content-Encoding: gzip`). Every other part is named `sha256:<64 hex>` of its bytes,
-        carries the file's mimetype as Content-Type and a `filename` hint, and is checked by
+        The first part, named `json`, is the object (application/json, plain: neither the body
+        nor a part carries a `Content-Encoding`). Every other part is named `sha256:<64 hex>`
+        of its bytes, carries the file's mimetype as Content-Type and a `filename` hint, and is
+        checked by
         the receiver (`422 digest_mismatch` on a mismatch). One part per distinct content. A
         part is at most 1 MiB (1,048,576 bytes): a larger file travels alone (B1, B2), and a
         request carrying one is `400 bad_request` with `details.large`.
@@ -3068,7 +3130,7 @@ components:
       description: |
         /info (web_api_spec.md §3.1): exactly these fields. Without a token it answers `401`,
         its envelope's details holding `api_versions` and `server` only.
-      required: [server, api_versions, server_time, limits, user]
+      required: [server, api_versions, server_time, limits, calls, boards_registered, user]
       properties:
         server: {type: string}
         api_versions:
@@ -3094,6 +3156,29 @@ components:
                 How long a deleted run or artifact is kept before E13 removes it for good, in
                 days (90 unless the server's administrator set another; data_format.md §6.7).
                 The app shows from it when a deleted item goes.
+        calls:
+          type: array
+          description: |
+            The optional calls this server offers, by their ids in the contract's §6.1, each at
+            most once, in any order; `[]` for none. A core call (`/info`, S1, P1, P2, P2b, P7,
+            P9, P10, P11, E1, E3, E4, E5, E7, E8, E9, E10, B1, B2) is never listed. An optional
+            call not listed answers `501 unsupported`, kind `invalid`. Without P3, every change
+            token is `""`.
+            E11, E12 and E13 are listed only when some login can hold the role `manager`.
+          uniqueItems: true
+          items:
+            type: string
+            enum: [P3, P4, P5, P6, P8, P8b, E2, E6, E11, E12, E13, E14, E15, E16, E17, L1, L2, L3, S2, S3, S4, U1]
+        boards_registered:
+          type: boolean
+          description: |
+            Whether the server registers its boards itself (contract §3.3). `false`: any serial
+            a bench runs becomes a board with its first run. `true`: each board is registered or
+            not; E4 lists exactly the registered ones, one with no run yet included; E1, E10
+            and E15 refuse a bench's write on a board that is not registered with `409
+            unknown_board`, kind `invalid`, and never one on a registered board (not an import,
+            whose new board becomes registered, not a replay); the app lets a bench pick a board
+            only from E4's list.
         user:
           type: object
           required: [name, roles]
@@ -3103,6 +3188,25 @@ components:
               type: array
               items: {type: string, enum: [bench, publisher, importer, manager, reader]}
             token_expires: {$ref: "#/components/schemas/Time"}
+    UserList:
+      type: object
+      description: U1 (contract §6.8), by `display_name` then `name`, each by case folding.
+      required: [users]
+      properties:
+        users:
+          type: array
+          items:
+            type: object
+            required: [name, display_name]
+            properties:
+              name:
+                type: string
+                minLength: 1
+                description: What a run records as its `operator` and a release as its `released_by`.
+              display_name:
+                type: string
+                minLength: 1
+                description: What the app shows for this user (the `name` again when the server has no other).
     ErrorEnvelope:
       type: object
       description: web_api_spec.md §5. `message` is one sentence the app shows.

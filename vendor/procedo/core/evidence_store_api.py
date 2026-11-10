@@ -49,7 +49,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from . import evidence_artifact_generations, evidence_outbox
+from . import evidence_artifact_generations, evidence_outbox, server_certificate
 from .evidence_api_cache import (
     forget_artifact,
     held,
@@ -64,6 +64,8 @@ from .evidence_api_http import (
     ApiError,
     ApiWire,
     active_store,
+    boards_registered,
+    offered_calls,
     require_json_api,
     version,
 )
@@ -111,7 +113,8 @@ _BOARD, _RUN = "evidence_api.board", "evidence_api.run"
 
 
 def _endpoint(params: dict[str, Any]) -> ApiEndpoint:
-    """An endpoint from a config entry's declared params (never the credential)."""
+    """An endpoint from a config entry's declared params (never the credential, never Accept
+    any certificate: this PC's, asked by the wire before each call, :mod:`server_certificate`)."""
     base_url = str(params.get("base_url") or "").strip()
     if not base_url:
         raise EvidenceError("invalid", "the web server needs an address")
@@ -183,6 +186,7 @@ class ApiStore(ApiSearch, LocalStaging):
             "off",
         ),
         ParamSpec("ca_bundle", "CA bundle (optional)", "str", False, ""),
+        server_certificate.PARAM,  # Accept any certificate: this PC's, never a project's
         ParamSpec("timeout", "Timeout (s)", "str", False, "30"),
         ParamSpec("proxy", "Proxy", "str", False, ""),
     ]
@@ -222,6 +226,10 @@ class ApiStore(ApiSearch, LocalStaging):
         self._ready_checked = False
         #: How long this server keeps a deletion (``limits.retention_days``).
         self.retention_days = RETENTION_DAYS
+        #: The optional calls this server offers (``/info``'s ``calls``, contract §6.1).
+        self.calls: frozenset[str] = frozenset()
+        #: Whether it registers its boards itself (``/info``'s ``boards_registered``, §3.3).
+        self.boards_registered = False
         self._store_id: int | None = None
         #: How many files of the last evidence move onto this store reached it (what a move
         #: that failed midway tells the user stays there unused).
@@ -273,7 +281,8 @@ class ApiStore(ApiSearch, LocalStaging):
     @classmethod
     def sync_params(cls, spec: dict[str, Any]) -> dict[str, Any]:
         """This entry's server as the parameters a project's origin record reconnects with
-        (:func:`project_transport.source_for`); never a credential."""
+        (:func:`project_transport.source_for`); never a credential, never Accept any
+        certificate (this PC's, read when it connects)."""
         endpoint = _endpoint(spec.get("params") or {})
         return {
             "base_url": endpoint.base_url,
@@ -324,6 +333,8 @@ class ApiStore(ApiSearch, LocalStaging):
         days = limits.get("retention_days")
         positive = isinstance(days, int) and not isinstance(days, bool) and days > 0
         self.retention_days = days if positive else RETENTION_DAYS
+        self.calls = offered_calls(info)
+        self.boards_registered = boards_registered(info)
         self._ready_checked = True
 
     def _storage(self) -> int:

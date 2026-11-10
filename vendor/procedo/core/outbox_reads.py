@@ -42,7 +42,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from . import evidence_outbox
+from . import evidence_outbox, server_offer
 from .annotation_entries import outcome
 from .evidence_shared_layout import pointer_of_test
 from .evidence_shared_manifest import after_pushes, annotation_of, run_info
@@ -315,7 +315,11 @@ def add_board_entries(
     the board's first run too — and the push creates the board when it is new. Per entry,
     the answer against ``seen``, the board's entries as this person read them
     (:func:`read_board_entries`); the store applies the same rule when they arrive, keeping
-    one that arrives after someone else's in the history, not current."""
+    one that arrives after someone else's in the history, not current. Never queued for a web
+    server that does not keep board entries (E15, contract §6.1): refused, nothing written."""
+    if server_offer.lacks(store, server_offer.BOARD_ENTRIES):
+        why = server_offer.REASONS["E15"]
+        raise EvidenceError("invalid", why, code=server_offer.UNSUPPORTED)
     evidence_outbox.queue_board_entries(store, project_id, board, added)
     held = list(seen)
     answers = []

@@ -16,9 +16,12 @@ import server_target
 pytestmark = pytest.mark.servers
 
 
+@pytest.mark.offer_aware  # the lot only when the server offers E15
+@pytest.mark.boards_aware
 def test_many_benches_at_once_lose_nothing_and_read_back_the_same(tmp_path, capsys):
     benches, seconds = server_target.load_settings()
     with server_target.serve(tmp_path / "server", server_target.LOCAL_LOGINS) as (base, running):
+        server_target.pushes_runs(base)
         load = server_load.run(base, benches=benches, seconds=seconds)
     with capsys.disabled():
         print("\n" + load.report())

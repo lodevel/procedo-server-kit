@@ -26,6 +26,11 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "switch(variable): runs only when the environment sets this variable to 1"
     )
+    import server_target
+
+    # A case making an optional call the server does not offer is skipped up front, naming it
+    # (§6.1); the calls each case makes are recorded when the environment asks for it.
+    server_target.register(config)
 
 
 def pytest_report_header(config):

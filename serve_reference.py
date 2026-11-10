@@ -1,6 +1,7 @@
 """Run the reference server on its own, as an external server the kit can be pointed at.
 
     python serve_reference.py [--port 8765] [--prefix /procedo/] [--data DIR] [--body-timeout 60]
+                              [--calls all|none|P3,E2,...] [--boards]
 
 It serves the JSON API on ``http://127.0.0.1:<port><prefix>`` until Ctrl+C (or until its
 standard input closes, with ``--until-stdin-closes``), behind a small front that strips the path
@@ -17,6 +18,11 @@ The reference server keeps everything in memory and under ``--data`` (a new temp
 default): stopping it forgets what it held. A request body that stops arriving for
 ``--body-timeout`` seconds is ``408 request_timeout``: the front passes what came on, and the
 server gives up on the rest.
+
+It offers every optional call of the contract (§6.1), U1 listing the users the kit's runs name
+(``server_target.KIT_USERS``). ``--calls`` names those it offers instead (``none``: the core
+calls only): the others answer ``501 unsupported``, so the kit can be tried against a server
+offering some of them only.
 """
 
 from __future__ import annotations
@@ -27,6 +33,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -36,6 +43,7 @@ _KIT = Path(__file__).resolve().parent
 sys.path[:0] = [str(_KIT / "vendor"), str(_KIT / "suites")]
 
 from reference_server import start, stop  # noqa: E402
+from server_target import KIT_USERS  # noqa: E402
 
 BENCH_TOKEN, MANAGER_TOKEN = "kit-bench", "kit-manager"
 IMPORTER_TOKEN, BENCH_ONLY_TOKEN = "kit-importer", "kit-bench-only"
@@ -193,6 +201,16 @@ class _FrontServer(ThreadingHTTPServer):
         return connection
 
 
+def _calls(text: str) -> list[str] | None:
+    """``--calls``: None for every optional call, else those named (none for ``none``)."""
+    text = text.strip()
+    if text.lower() == "all":
+        return None
+    if text.lower() == "none":
+        return []
+    return [call.strip() for call in text.split(",") if call.strip()]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--port", type=int, default=8765, help="0 picks a free port")
@@ -204,15 +222,36 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--until-stdin-closes", action="store_true", help="stop when standard input closes"
     )
+    parser.add_argument(
+        "--calls",
+        default="all",
+        help="the optional calls it offers, comma-separated (P3,E2,U1), 'all' or 'none': "
+        "the others answer 501 unsupported",
+    )
+    parser.add_argument(
+        "--boards",
+        action="store_true",
+        help="register its boards itself (boards_registered, §3.3): one board, PN-1/A/SN-REG, in "
+        "a new project it prints as PROCEDO_KIT_BOARDS_PROJECT",
+    )
     args = parser.parse_args(argv)
     prefix = "/" + args.prefix.strip("/") + "/" if args.prefix.strip("/") else "/"
     data = args.data or Path(tempfile.mkdtemp(prefix="procedo_reference_"))
-    backend_url, running = start(data, TOKENS, body_timeout=args.body_timeout)
+    calls = _calls(args.calls)
+    users = list(KIT_USERS)
+    boards_project = str(uuid.uuid4())
+    board = {"serial": "SN-REG", "part_number": "PN-1", "board_revision": "A"}
+    boards = {boards_project: [board]} if args.boards else None
+    backend_url, running = start(
+        data, TOKENS, body_timeout=args.body_timeout, calls=calls, users=users, boards=boards
+    )
     front = _FrontServer(args.port, prefix, backend_url, running.state)
     port = front.server_address[1]
     print(f"PROCEDO_KIT_SERVER=http://127.0.0.1:{port}{prefix}")
     for variable, value in VARIABLES:
         print(f"{variable}={value}")
+    if args.boards:
+        print(f"PROCEDO_KIT_BOARDS_PROJECT={boards_project}")
     sys.stdout.flush()
     thread = threading.Thread(target=front.serve_forever, daemon=True)
     thread.start()

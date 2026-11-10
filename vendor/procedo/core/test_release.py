@@ -72,6 +72,7 @@ TEXT_DOCUMENTS = ("procedure_text.md", "procedure.json", "test.py")
 
 #: What the user is told when a release is refused.
 SHARE_UNREACHABLE = "The share can't be reached: release it once it's back."
+SERVER_UNREACHABLE = "The server can't be reached: release it once it's back."
 NOTHING_RUNS = "Nothing to release yet: the test has nothing that runs."
 SAME_AS_RELEASE = "Nothing to release: the files are exactly v{number}."
 NO_TEST_ID = (
@@ -572,16 +573,19 @@ def project_path(test: str, name: str) -> str:
     return name if name.startswith(f"{FUNCTIONS}/") else f"tests/{test}/{name}"
 
 
-def release(project_root: Path, test: str, note: str = "") -> int:
+def release(project_root: Path, test: str, note: str = "", released_by: str | None = None) -> int:
     """Release *test* as it is now, with *note*: its file written where :func:`where` says;
-    the number it took. Raises :class:`Refused` (the message for the user). A working copy of a
-    project on a server releases there (``project_sync_gateway.SyncGateway.release``)."""
+    the number it took. *released_by*: who releases (``None``: :func:`user`; a server that lists
+    its users is given one of them, ``release_users``). Raises :class:`Refused` (the message for
+    the user). A working copy of a project on a server releases there
+    (``project_sync_gateway.SyncGateway.release``)."""
     root = Path(project_root)
     place = where(root)
+    by = user() if released_by is None else released_by
     if place.kind == SERVER:
         from .project_sync_gateway import gateway  # the sync sits above this module
 
-        return gateway().release(root, test, note)
+        return gateway().release(root, test, note, released_by=by)
     ready = releasable(root, test)
     test_id, fmt, docs = ready.test_id, ready.fmt, ready.docs
     if place.kind == SHARE and not _answers(place.share):
@@ -595,7 +599,7 @@ def release(project_root: Path, test: str, note: str = "") -> int:
 
     def made(number: int) -> bytes:
         return release_bytes(
-            test, test_id, number, fmt, docs, note=note.strip(), released_by=user(), pc=pc_name()
+            test, test_id, number, fmt, docs, note=note.strip(), released_by=by, pc=pc_name()
         )
 
     try:
