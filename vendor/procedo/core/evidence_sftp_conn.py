@@ -56,6 +56,7 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
 
+from . import server_log
 from .evidence_store import Absent, AuthRequired, EvidenceError
 
 log = logging.getLogger(__name__)
@@ -370,6 +371,7 @@ class SignInRefused(AuthRequired):
         super().__init__(text)
 
 
+@server_log.connecting("SFTP", lambda endpoint, *_args, **_kw: endpoint.identity)
 def connect(
     endpoint: SftpEndpoint,
     credentials: Credentials | None,

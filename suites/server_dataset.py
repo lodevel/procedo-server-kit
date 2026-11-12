@@ -199,13 +199,11 @@ class _Filler:
                    board_entry("field", "ACME", None, "Customer")]  # fmt: skip
         ev.entries(serial, "AX", "B", entries)
         report = ev.artifact("report", "report.html", serial, "AX", "B", data=b"<p>v1</p>")
-        ev.artifact_pushed(report)
         second = ev.artifact("report", "report.html", serial, "AX", "B", data=b"<p>v2</p>")
-        ev.artifact_pushed(second)
         export = ev.artifact("export", "export.csv", "", data=b"a,b\n1,2\n")
-        ev.artifact_pushed(export)
         for art in (report, second, export):
-            self.blob(self.pid, ev.blobs[art["sha256"]])
+            if "store_id" in ev.artifact_pushed(art):  # a report's page may not be kept (§5.10)
+                self.blob(self.pid, ev.blobs[art["sha256"]])
         _answer(ev.delete_run(run_ids[2]), "E11")
         _answer(ev.delete_artifact(export), "E12")
         return run_ids, [

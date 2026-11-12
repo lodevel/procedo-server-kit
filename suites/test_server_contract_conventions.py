@@ -390,6 +390,7 @@ def report_body(store_id: int, data: bytes, **fields: Any) -> dict:
         "store_id": store_id,
         "machine_id": MACHINE,
         "updated_at": now(),
+        "info": {"version": "1.0", "metadata": {"report": "kit-report.html"}},
     }
     report.update(fields)
     return report

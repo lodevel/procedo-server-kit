@@ -110,7 +110,7 @@ class Wire(Server):
             url += "?" + urlencode(query, quote_via=quote)
         sent = {
             "Accept": "multipart/mixed, application/json",
-            "Authorization": f"Bearer {token(role)}",
+            "Authorization": f"Bearer {server_target.token(role)}",
             **(headers or {}),
         }
         if body is not None:
@@ -139,11 +139,6 @@ class Wire(Server):
         return Reply(answer.status, answer.headers, answer.read())
 
 
-def token(role: str) -> str:
-    if role == "importer":
-        server_target.local_only("the kit has no importer login")
-        return "t-importer"
-    return server_target.token(role)
 
 
 def _param(header: str, value: str, name: str) -> str | None:
@@ -193,6 +188,15 @@ def refused(reply: Reply, status: int, code: str) -> dict:
     kinds = {400: "invalid", 404: "not_found", 409: "invalid"}
     kind = "corrupt" if code == "run_conflict" else kinds[status]
     return check_envelope(reply, status, kind, code)
+
+
+def as_kept(sent: dict, answer: dict) -> dict:
+    """The Artifact *sent* as a server answers it: a report it keeps without its page (no
+    ``store_id`` in its *answer*) has its page's ``sha256`` and no ``size`` or ``store_id``
+    (§5.10); anything else as sent."""
+    if sent.get("kind") != "report" or "store_id" in answer:
+        return sent
+    return {k: v for k, v in sent.items() if k not in ("size", "store_id")}
 
 
 def form_data(json_bytes: bytes, files: dict[str, bytes]) -> tuple[bytes, str]:
@@ -310,7 +314,8 @@ class Evidence:
         replaces: str | None = None,
         **fields: Any,
     ) -> dict:
-        """An Artifact (§5.10): a report's or export's file, or a draft's content."""
+        """An Artifact (§5.10): a report's or export's file, or a draft's content; a report
+        carries its record (``info``, a small one unless given)."""
         art: dict = {"format_version": 2, "kind": kind, "serial": serial}
         if part_number is not None:
             art["part_number"] = part_number
@@ -324,6 +329,8 @@ class Evidence:
             data = f"<p>{name} {secrets.token_hex(4)}</p>".encode() if data is None else data
             self.blobs[sha(data)] = data
             art.update(sha256=sha(data), size=len(data), store_id=self.store)
+        if kind == "report":
+            art["info"] = {"version": "1.0", "metadata": {"report": name}}
         art.update(fields)
         return art
 
@@ -1662,6 +1669,7 @@ def test_an_artifacts_fields_and_records_read_back_as_pushed(ev):
     ev.artifact_pushed(draft)
     have = ",".join(ev.held_versions())
     read = ok(ev.get_artifact("report", report["name"], "SN0042", "AX-2210", "B", have=have))
+    report = as_kept(report, read)
     assert set(read) == set(report) | {"generation"}, sorted(set(read) ^ set(report))
     for key, value in report.items():
         assert read[key] == value, key
@@ -1682,6 +1690,48 @@ def test_an_artifacts_fields_and_records_read_back_as_pushed(ev):
     }
     rows = ev.list_artifacts(include="info")["artifacts"]
     assert "content" not in rows[1] and json.dumps(rows[0]["info"]) == json.dumps(info)
+
+
+@rule("5.10.report-info-required")
+def test_a_report_without_its_record_is_refused(ev):
+    """A report is its record: one without ``info`` is refused, nothing written; an export
+    needs none."""
+    report = ev.artifact("report", "r.html", "SN-1", "AX", "B")
+    del report["info"]
+    refused(ev.push_artifact(report), 400, "bad_request")
+    assert ev.list_artifacts(deleted="include")["artifacts"] == []
+    assert ev.artifact_pushed(ev.artifact("export", "all.md", ""))["generation"] == 1
+
+
+@rule("5.10.report-page-optional", "5.10.report-page-never-refused")
+def test_a_report_reads_back_as_its_record_with_its_page_or_without(ev):
+    """A report reads back with its record exactly, on E10's answer, E9's and E8's rows, and in
+    one form: with its page (its ``size``, ``store_id`` and part, the bytes sent) or kept
+    without it (its page's ``sha256`` as sent, no ``size``, no ``store_id``, no part). Kept
+    without it, it is never refused for its page: sent again with no part, and a new generation
+    (other bytes) with no part, each is taken."""
+    info = {"version": "1.0", "metadata": {"z": "last", "a": "first"}, "tests": [{"b": 1}]}
+    report = ev.artifact("report", "r.html", "SN-1", "AX", "B", info=info)
+    saved = ev.artifact_pushed(report)
+    obj, parts = parse(ev.get_artifact("report", "r.html", "SN-1", "AX", "B"))
+    [row] = ev.list_artifacts(include="info")["artifacts"]
+    with_page = "store_id" in obj
+    for answer in (saved, obj, row):
+        assert json.dumps(answer["info"]) == json.dumps(info), answer
+        assert answer["sha256"] == report["sha256"], answer
+        file = (answer.get("size"), answer.get("store_id"))
+        assert file == ((report["size"], report["store_id"]) if with_page else (None, None))
+    if with_page:
+        assert parts == {f"sha256:{report['sha256']}": ev.blobs[report["sha256"]]}
+    else:
+        assert parts == {}
+        again = ok(ev.push_artifact(report, parts=False))  # never refused for its page
+        assert again["status"] == "already", again
+        newer = ev.artifact("report", "r.html", "SN-1", "AX", "B", info=info)  # other bytes
+        answer = ok(ev.push_artifact(newer, parts=False))
+        assert (answer["status"], answer["artifact"]["generation"]) == ("saved", 2), answer
+        assert answer["artifact"]["sha256"] == newer["sha256"]
+        assert "store_id" not in answer["artifact"]
 
 
 @rule("5.10.serial-by-kind-400")
@@ -1878,6 +1928,37 @@ def test_e12_replays_change_nothing(ev):
     assert not any(k.startswith("deleted_") for k in back), back
     assert ok(ev.restore_artifact(report)) == back
     assert [r["generation"] for r in ev.list_artifacts(generations="all")["artifacts"]] == [2, 1]
+
+
+@rule("import.delete-replay")
+def test_an_imported_delete_of_a_deleted_item_is_a_replay(ev):
+    """§6.7: a move run again deletes again, as an import, what it deleted already: nothing
+    changes, the first ``deleted_*`` stay (a run and an artifact)."""
+    server_target.needs(ev.wire.base_url, "import")
+    run = ev.run()
+    ev.pushed(run)
+    report = ev.artifact("report", "r.html", "SN-1", "AX", "B")
+    ev.artifact_pushed(report)
+    first = {"deleted_at": "2020-02-02T02:02:02Z", "deleted_by": "source-login",
+             "deleted_bench": "abcdef01"}  # fmt: skip
+    second = {"deleted_at": "2021-03-03T03:03:03Z", "deleted_by": "other-login",
+              "deleted_bench": "abcdef02"}  # fmt: skip
+
+    def deleted(path: str, named: dict, fields: dict, reason: str) -> dict:
+        body = {"import": True, "machine_id": MACHINE, "reason": reason, **named, **fields}
+        return ok(ev.wire.send("POST", path, role="importer", body=body))
+
+    run_path = ev.path("runs", run["run_id"], "delete")
+    deleted(run_path, {}, first, "first")
+    deleted(run_path, {}, second, "second")
+    read = ok(ev.wire.send("GET", ev.path("runs", run["run_id"])))
+    assert {k: read.get(k) for k in first} == first, read
+    assert read["deleted_reason"] == "first", read
+    art_path = ev.path("artifacts", "delete")
+    gone = deleted(art_path, ev.named(report), first, "first")
+    again = deleted(art_path, ev.named(report), second, "second")
+    assert {k: again.get(k) for k in first} == first, again
+    assert again["deleted_reason"] == "first" == gone["deleted_reason"], again
 
 
 @rule("E12.acts-on-name")
@@ -2106,7 +2187,7 @@ def test_e13_purges_what_was_deleted_strictly_longer_ago_than_the_retention(loca
 @rule("E13.pointer-of-purged")
 def test_e13_purging_a_run_a_pointer_still_names_hands_the_pointer_on(local):
     """Only an imported delete on a server offering E6 leaves a pointer naming a deleted run
-    (§6.7; without E6 it hands the pointer on): the kit has no importer login, so this runs on
+    (§6.7; without E6 it hands the pointer on), so this runs on
     the reference server only."""
     _running, ev = local
     server_target.needs(ev.wire.base_url, "E6")

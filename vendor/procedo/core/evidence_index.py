@@ -164,7 +164,11 @@ SCHEMA = 1
 REPORT = "report"
 RUN = "run"  # a published run's own line — never listed through KINDS (see module docstring)
 KINDS: tuple[str, ...] = (REPORT,)  # the kinds whose listing reads a sidecar
-PATTERN = "*.html"  # what a report listing matches
+PATTERN = "*.html"  # what a report listing matches: its page
+RECORD = "*.json"  # and its record, which is the report (contract §5.10): a lone one is listed
+#: Beside the reports, no record of one: a draft, and what became of a deleted item (its
+#: tombstone, :func:`evidence_trash.tombstone`).
+DRAFT, TOMBSTONE = ".draft.json", ".deleted.json"
 ABSENT = -1  # a length or time that is not there (no sidecar, or an unreadable entry)
 DELETED = "deleted"  # a line's flag: the item is in the evidence trash (:func:`trash_line`)
 
@@ -731,7 +735,11 @@ def _listing(store: Any, where: PurePath) -> list[PurePath] | None:
     try:
         if not io.is_dir(where):
             return []
-        return by_name(match_children(io, where, PATTERN))
+        found = match_children(io, where, "*")  # one listing
+        # A report is its record (contract §5.10): listed by it, its page there or not.
+        records = [p for p in found if p.match(RECORD) and not p.name.endswith((DRAFT, TOMBSTONE))]
+        pages = {p for p in found if p.match(PATTERN)}
+        return by_name(sorted(pages | {p.with_suffix(".html") for p in records}))
     except OSError:
         if reliable(store):
             raise

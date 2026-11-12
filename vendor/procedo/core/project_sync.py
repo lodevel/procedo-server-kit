@@ -260,6 +260,10 @@ def _refuse_identity_change(made: Plan, working_copy: Path, origin: Origin) -> N
             _require_same_project(working_copy, origin)
 
 
+#: The code of a push refused while a pull is owed (``failure_log``: an expected refusal).
+PULL_OWED = "pull_owed"
+
+
 def _refuse_blind_push(working_copy: Path, origin: Origin) -> None:
     """A push refuses while the record says a pull is owed: the manifest is then not a
     picture of the server, and every upload would be made against the wrong version."""
@@ -269,6 +273,7 @@ def _refuse_blind_push(working_copy: Path, origin: Origin) -> None:
             f"{working_copy} owes a pull before anything is pushed: the last pull did "
             "not finish, so the record is not a picture of the server and every upload "
             "would be blind. Refresh from the server, then save again.",
+            code=PULL_OWED,
         )
 
 

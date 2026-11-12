@@ -50,6 +50,21 @@ def shown(text: str) -> str:
     return at.astimezone().strftime(SHOWN)
 
 
+def offset(at: datetime) -> str:
+    """How far this PC's local time is from UTC at *at*: ``+02:00``, ``-05:30``."""
+    minutes = round(at.astimezone().utcoffset().total_seconds() / 60)  # type: ignore[union-attr]
+    sign, minutes = ("-" if minutes < 0 else "+"), abs(minutes)
+    return f"{sign}{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+def shown_at(text: str, at_offset: str) -> str:
+    """The recorded time *text* as it read where the local time was *at_offset* from UTC
+    (:func:`offset`): a report's time as the PC that made it showed it, on any PC."""
+    zone = datetime.strptime(at_offset, "%z").tzinfo
+    at = datetime.strptime(text, RECORDED).replace(tzinfo=timezone.utc)
+    return at.astimezone(zone).strftime(SHOWN)
+
+
 def day_start(day: date) -> str:
     """When the day *day* of this PC's calendar starts (its local midnight), as recorded."""
     return recorded(datetime.combine(day, time.min))

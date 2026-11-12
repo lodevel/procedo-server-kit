@@ -95,6 +95,7 @@ from .evidence_store import (
     RunInfo,
     check_test_id,
     guard_component,
+    no_page,
     safe_component,
 )
 from .evidence_store_fs import _format_mtime, _sidecars, os_error
@@ -426,11 +427,21 @@ class SharedLayout(LocalStaging):
                 raise os_error(exc) from exc
         p = self._artifact_root(kind, project_id, board) / guard_component(name)
         try:
-            return self.io.read_bytes(p)
+            return self._payload(kind, p)
         except FileNotFoundError:
             raise EvidenceError("not_found", f"no {kind} {name!r} for {board}") from None
         except OSError as exc:
             raise os_error(exc) from exc
+
+    def _payload(self, kind: str, p: PurePath) -> bytes:
+        """The file at *p*; a report there as its record alone (contract §5.10) is
+        :func:`evidence_store.no_page`, as on every storage."""
+        try:
+            return self.io.read_bytes(p)
+        except FileNotFoundError:
+            if kind == "report" and self.io.is_file(_sidecars(kind, p)[0]):
+                raise no_page(p.name) from None
+            raise
 
     def _report_info(self, html: PurePath) -> ArtifactInfo:
         """The row a report's sidecar stands for. The rule itself lives in
@@ -480,7 +491,7 @@ class SharedLayout(LocalStaging):
         if kind not in evidence_artifact_generations.KEPT:
             raise EvidenceError("invalid", f"a {kind} keeps no generations")
         root = self._artifact_root(kind, project_id, board)
-        return evidence_artifact_generations.listing(self.io, root, guard_component(name))
+        return evidence_artifact_generations.listing(self.io, root, guard_component(name), kind)
 
     def list_generations(
         self, kind: str, project_id: str, board: str, name: str, ctx: OpContext | None = None
@@ -509,7 +520,7 @@ class SharedLayout(LocalStaging):
         try:
             for n, p in self._generations(kind, project_id, board, name):
                 if n == generation:
-                    return self.io.read_bytes(p)
+                    return self._payload(kind, p)
         except OSError as exc:
             raise os_error(exc) from exc
         raise EvidenceError("not_found", f"no generation {generation} of {kind} {name!r}")

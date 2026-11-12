@@ -895,6 +895,9 @@
   "test_server_contract_evidence.py::test_a_report_or_a_draft_creates_its_board_and_an_export_none": [
    "E1"
   ],
+  "test_server_contract_evidence.py::test_a_report_reads_back_as_its_record_with_its_page_or_without": [
+   "E1"
+  ],
   "test_server_contract_evidence.py::test_a_restored_run_a_newer_one_replaced_stays_in_the_history": [
    "E1",
    "E11"
@@ -924,6 +927,12 @@
   ],
   "test_server_contract_evidence.py::test_an_artifacts_fields_and_records_read_back_as_pushed": [
    "E1"
+  ],
+  "test_server_contract_evidence.py::test_an_imported_delete_of_a_deleted_item_is_a_replay": [
+   "E1",
+   "E11",
+   "E12",
+   "import"
   ],
   "test_server_contract_evidence.py::test_an_override_outside_the_six_verdicts_is_refused": [
    "E1"

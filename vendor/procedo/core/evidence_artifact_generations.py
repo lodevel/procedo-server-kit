@@ -22,9 +22,10 @@ lock (``<folder>/.lock``), so two benches never both take one number, nor both r
 not kept: each save replaces it.
 
 The first one sent is generation 1, and ``<name>`` is one more than the highest folder
-(:func:`listing`). A listing of ``<folder>`` matches ``*.html`` (reports) or files (exports),
-so ``.generations`` is never an artifact; the trash takes ``.generations/<name>`` with its
-artifact and puts it back with it (``SharedLayout.delete_artifact``).
+(:func:`listing`). A listing of ``<folder>`` matches reports (their record ``*.json``, or page) or
+files (exports), so ``.generations`` is never an artifact; the trash takes
+``.generations/<name>`` with its artifact and puts it back with it
+(``SharedLayout.delete_artifact``).
 
 Every store read and write goes through the store's tree. Qt-free, stdlib only.
 """
@@ -54,14 +55,20 @@ def _numbers(io: Any, folder: PurePath) -> list[int]:
     return sorted(int(n) for n in io.list_names(folder) or [] if _NUMBER.fullmatch(n))
 
 
-def listing(io: Any, root: PurePath, name: str) -> list[tuple[int, PurePath]]:
+def listing(io: Any, root: PurePath, name: str, kind: str) -> list[tuple[int, PurePath]]:
     """``(number, payload)`` of every generation of ``root/name``, oldest first: each
-    numbered folder holding its payload, then ``<name>`` itself, one more than the highest
-    number taken. ``[]``: the artifact is not there."""
+    numbered folder holding it, then ``<name>`` itself, one more than the highest number
+    taken. A report is there by its record, its page there or not (contract §5.10). ``[]``:
+    the artifact is not there."""
+
+    def there(payload: PurePath) -> bool:
+        record = _sidecars(kind, payload)[:1] if kind == "report" else ()
+        return any(io.is_file(p) for p in (payload, *record))
+
     folder = folder_of(root, name)
     numbers = _numbers(io, folder)
-    found = [(n, folder / str(n) / name) for n in numbers if io.is_file(folder / str(n) / name)]
-    if io.is_file(root / name):
+    found = [(n, folder / str(n) / name) for n in numbers if there(folder / str(n) / name)]
+    if there(root / name):
         found.append((numbers[-1] + 1 if numbers else 1, root / name))
     return found
 

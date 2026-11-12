@@ -971,29 +971,29 @@ def test_an_answer_with_parts_is_multipart_mixed_with_the_json_part_first(api):
     assert whole["project_id"] == project.pid
     read = check_mixed(api.get(project.path(f"runs/{run['run_id']}")), {version(picture): picture})
     assert read["run_id"] == run["run_id"]
-    art = an_artifact(api, report, "r.html")
+    art = an_artifact(api, report, "r.docx", kind="export")  # a report's page may not be kept
     ok(api.post_form(project.path("artifacts"), art, [report]))
-    query = {"serial": SERIAL, **board_query()}
+    query = {"serial": "", "part_number": "", "board_revision": ""}
     got = check_mixed(
-        api.get(project.path("artifacts/report/r.html"), query), {version(report): report}
+        api.get(project.path("artifacts/export/r.docx"), query), {version(report): report}
     )
     assert got["sha256"] == hex_of(report)
 
 
 def an_artifact(api: Api, data: bytes, name: str, kind: str = "report") -> dict:
-    """An Artifact (§5.10) of the case's board, its bytes a part of the ``api`` storage."""
+    """An Artifact (§5.10), its bytes a part of the ``api`` storage: a report of the case's
+    board with its record, or a project-level export."""
+    board = {"serial": SERIAL, "part_number": PN, "board_revision": REV, "name": name}
     return {
         "format_version": 2,
         "kind": kind,
-        "serial": SERIAL,
-        "part_number": PN,
-        "board_revision": REV,
-        "name": name,
+        **(board if kind == "report" else {"serial": "", "name": name}),
         "machine_id": MACHINE,
         "updated_at": "2026-04-01T10:00:00Z",
         "sha256": hex_of(data),
         "size": len(data),
         "store_id": api.store(),
+        **({"info": {"version": "1.0", "metadata": {"report": name}}} if kind == "report" else {}),
     }
 
 
@@ -2333,11 +2333,12 @@ def a_report(api: Api, data: bytes, **more: Any) -> dict:
         "sha256": hex_of(data),
         "size": len(data),
         "store_id": api.store(),
+        "info": {"version": "1.0", "metadata": {"report": "full.html"}},
         **more,
     }
 
 
-@pytest.mark.rule("import.E10-generation")
+@pytest.mark.rule("import.E10-generation", "import.E10-changed-current")
 def test_an_imported_report_keeps_its_generation(api):
     pid = server_target.fresh_id()
     first, other = binary(300), binary(300)
@@ -2351,6 +2352,7 @@ def test_an_imported_report_keeps_its_generation(api):
     error = refused(reply, 409, "changed")
     held = error["details"]["current"]
     assert (held["generation"], held["sha256"]) == (3, hex_of(first)), error
+    assert held["info"] == body["info"], error  # the record a move compares its own with
 
 
 @pytest.mark.rule("import.E11-E12-delete")

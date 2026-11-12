@@ -220,6 +220,9 @@ def manifest_of(unit: Unit) -> Rel:
 #: exactly, the reason the destination does not hold it (a string), or ``None``: a file the
 #: destination rebuilds itself (:func:`is_derived`), neither carried nor missed.
 Answer = bool | str | None
+#: A file landed without replacing (``put_unit(replace=False)``) that the destination holds
+#: otherwise: kept as it is there.
+THERE_OTHERWISE = "already there with other content; kept as it is there"
 
 
 def is_derived(rel: Rel) -> bool:
@@ -243,6 +246,10 @@ class EvidenceForm(Protocol):
     #: The evidence folder on THIS PC when the store is one, else ``None``: only such a
     #: source is emptied after a move (a server's evidence is never deleted by a move).
     local_root: Path | None
+    #: The pass this form lands in, as a destination (set by the move before :meth:`prepare`):
+    #: its cancel, and what one pass reads once (a report drawn from its record).
+    #: None outside a move.
+    pass_ctx: Any
 
     def overlap(self, other: EvidenceForm) -> str | None:
         """Why this store and *other* are not two places (``None``: they are)."""
@@ -284,9 +291,19 @@ class EvidenceForm(Protocol):
         """Make the destination ready for this project's evidence (a folder made and marked,
         a database's project row and its record of the import from *source*)."""
 
-    def put_unit(self, unit: Unit, rels: list[Rel], fetch: Fetch) -> dict[Rel, Answer]:
+    def put_unit(
+        self, unit: Unit, rels: list[Rel], fetch: Fetch, *, replace: bool = True
+    ) -> dict[Rel, Answer]:
         """Land one unit, its files fetched from the source by *fetch*; idempotent: what the
-        storage already holds exactly is not written again."""
+        storage already holds exactly is not written again. ``replace=False`` (add missing)
+        replaces nothing the storage holds otherwise, asked right before each write (under
+        :meth:`writers_lock`, which the caller holds): such a file answers
+        :data:`THERE_OTHERWISE`, or the storage's own refusal."""
+
+    def writers_lock(self, unit: Unit, rels: list[Rel]) -> AbstractContextManager[bool]:
+        """The lock a bench's writer of *unit* takes on this storage, held while add missing
+        lands the unit and reads it back: ``True`` when one is held, ``False`` for a storage
+        whose landing takes its own (a database's transaction, a web server's call)."""
 
     def move_lock(self, project_id: str, cancel: Any) -> AbstractContextManager[Any]:
         """The source's own lock for the whole pass: one move of this project's evidence out of

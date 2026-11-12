@@ -12,7 +12,8 @@ checks a Qt slot makes on a path that can live on a share, ``unreachable`` the g
 letter at start, off the GUI thread), the one key of a place, the one compare
 of two recorded spellings and the one path-under-a-folder test across them;
 ``is_windows_reserved`` the one Windows device-name test (two levels) and ``is_safe_name``
-the one portable file-name test.
+the one portable file-name test; ``long_form`` / ``long_text`` / ``short_text`` the one Windows
+long-path spelling (``\\\\?\\``) and its inverse.
 """
 
 from __future__ import annotations
@@ -338,6 +339,38 @@ def is_file_quiet(path: Path | str) -> bool:
 def is_dir_quiet(path: Path | str) -> bool:
     """``Path.is_dir()`` that reads an unreachable volume as absent."""
     return _quiet(Path.is_dir, path)
+
+
+def long_text(text: str) -> str:
+    """An absolute Windows path *text* in its long form, which Windows' 260-character limit does
+    not cut: ``\\\\?\\C:\\…``, a share ``\\\\?\\UNC\\server\\…``; one already in it as it
+    is, a device path's ``\\\\.\\`` given the long form's prefix."""
+    if text.startswith("\\\\.\\"):
+        return "\\\\?\\" + text[4:]
+    if text.startswith("\\\\?\\"):
+        return text
+    if text.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + text[2:]
+    return "\\\\?\\" + text
+
+
+def short_text(text: str) -> str:
+    """*text* without the long form's prefix (:func:`long_text`'s inverse): ``\\\\?\\C:\\…``
+    reads ``C:\\…``, ``\\\\?\\UNC\\server\\…`` the share ``\\\\server\\…``."""
+    if text.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + text[len("\\\\?\\UNC\\") :]
+    if text.startswith("\\\\?\\"):
+        return text[len("\\\\?\\") :]
+    return text
+
+
+def long_form(folder: str | os.PathLike[str]) -> Path:
+    """*folder* as a deep scratch tree uses it: on Windows in its long form (:func:`long_text`),
+    so no path below it is cut at 260 characters whatever its names are; elsewhere as it is (no
+    such limit)."""
+    if os.name != "nt":
+        return Path(folder)
+    return Path(long_text(os.path.abspath(folder)))
 
 
 def rmtree(path: Path, *, ignore_errors: bool = False) -> None:

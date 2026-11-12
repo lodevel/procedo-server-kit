@@ -57,6 +57,8 @@ what the app does without each.
 **You choose:**
 
 - who registers the boards: [`boards_registered`](#rule-3.3.info-boards-registered);
+- a report's HTML page kept beside its record, or its record alone:
+  [5.10](#rule-5.10.report-page-optional);
 - your users, and whether a run or release naming nobody is taken: [U1](#rule-U1.users),
   [the absent name](#rule-U1.unnamed-choice);
 - no imports: [`import`](#rule-6.1.import-unlisted-501); the kit then skips the import's cases;
@@ -1008,16 +1010,16 @@ artifact belongs to the "no part number" board, as a format-1 run does.
 | Field | Type | Req. | Meaning |
 |---|---|---|---|
 | `format_version` | integer | yes | 2, or 1 for an artifact recorded without the board identity. |
-| `kind` | string | yes | `report` (a board's HTML report), `export` (a project-level export: Word, Markdown, one-file record), `draft` (a report draft being edited). |
+| `kind` | string | yes | `report` (a board's report: its record, and the HTML page drawn from it), `export` (a project-level export: Word, Markdown, one-file record), `draft` (a report draft being edited). |
 | <a id="rule-5.10.serial-by-kind-400"></a>`serial` | string | yes | The board's serial; `""` for an export, always project-level. An export with a serial, or a report or draft without one: `400 bad_request`. |
 | `part_number`, `board_revision` | string | no | The rest of the board; absent: none, and always absent for an export. |
 | `name` | string | yes | Its file name (`2026-09-20_full-qual.html`). |
 | <a id="rule-5.10.artifact-fields"></a>`work_order` | string | no | A report's or draft's work order. |
 | `fields` | object (string values) | no | A report's or draft's own fields. A search by it may be slower. |
-| `info` | object | no | Its record (a report's JSON record, an export's metadata). Kept verbatim, **key order included** (below). |
+| <a id="rule-5.10.report-info-required"></a>`info` | object | a report: yes | Its record (a report's JSON record, an export's metadata). Kept verbatim, **key order included** (below). A report without one: `400 bad_request`, nothing written. |
 | `content` | object | draft only | A draft's content; a draft has no file. Kept as `info` is. |
-| `sha256` | string (hex) | yes | A report's or export's file. For a draft: its version (below). |
-| `size`, `store_id` | integer | yes, not for a draft | A report's or export's file, a reference as a RunFile's. A draft has neither. |
+| `sha256` | string (hex) | yes | A report's or export's file (a report kept without its page: its page's, as sent, below). For a draft: its version (below). |
+| `size`, `store_id` | integer | yes, not for a draft | A report's or export's file, a reference as a RunFile's. A draft has neither, nor has a report kept without its page. |
 | `generated` | time | no | When it was made: a report's record (`info`) writes the same time, in UTC. |
 | `verdict` | string | no | A report's overall verdict. |
 | `operator` | string | no | Who made it. |
@@ -1034,6 +1036,18 @@ JSON: keys sorted by code point at every level, no blank between tokens, non-ASC
 written as themselves, UTF-8 (Python's `json.dumps(content, sort_keys=True, separators=(",",
 ":"), ensure_ascii=False)`). <a id="rule-5.10.draft-version"></a>**The app computes it and sends it; the server stores and answers
 it, and never computes it.**
+
+<a id="rule-5.10.report-page-optional"></a>**A report is its record; keeping its page is the
+server's choice.** The HTML page is drawn from `info` alone, an export of it: the app draws it
+again from `info` when it opens a report kept without it. The bench always sends both (E10). A
+server keeping the page answers the report as sent. A server keeping the record alone answers
+it as it answers a draft: its `sha256` as sent (E10 compares it, so a report is the same report
+on every server), no `size`, no `store_id`, never a part, and `info` exactly.
+<a id="rule-5.10.report-page-never-refused"></a>It never refuses a report for its page (no
+`409 missing_files` naming it): a report sent with no part, a new generation included, is taken.
+The page's bytes are then referenced by
+nothing: a part sent is not kept, and a file the bench put in a storage is reclaimed as any
+unreferenced blob (7.1) or, in a declared storage, listed by S3.
 
 **`info` and `content` are JSON values, not files.** The server stores and returns each as the
 JSON object sent. <a id="rule-5.10.info-key-order"></a>The app rebuilds file bytes from the object read back, so **a server keeps the
@@ -1814,14 +1828,17 @@ part number, revision and name, each ascending by case folding ("none" first), t
 
 #### E9 · `GET /projects/{project}/artifacts/{kind}/{name}?serial=…&part_number=…&board_revision=…&generation=&have=…`
 
-<a id="rule-E9.generation"></a>Answer: one Artifact + its part: the newest generation, or generation `n` with `generation=n`. A
+<a id="rule-E9.generation"></a>Answer: one Artifact + its part (none for a draft, or for a report kept without its page,
+5.10): the newest generation, or generation `n` with `generation=n`. A
 <a id="rule-E9.draft-generation-404"></a>generation the name does not hold, or `generation` on a draft (which has none): `404 not_found`.
 The board parameters are required (above).
 
 #### E10 · `POST /projects/{project}/artifacts`
 
 Push a report, an export or a draft. Role: `bench` (importer: 6.7). The Artifact as `json`; its
-file first put in the active storage, or a part of the same request for an `api` storage.
+file first put in the active storage, or a part of the same request for an `api` storage. A
+report always carries its record, `info`, and its page; a server may keep the record alone
+(5.10).
 
 | Case | Answer |
 |---|---|
@@ -2086,8 +2103,8 @@ Per call:
 | <a id="rule-import.E1-no-pointer"></a>E1 | The run keeps the `pushed_at` sent. On a server offering E6, **no pointer moves**: the importer sets each one (E6). <a id="rule-import.E1-rule-without-E6"></a>On a server **not** offering E6 (its `/info` `calls` does not list it), the imported run moves the pointer **as a bench's run does** (the pointer rule, 5.13): the newest complete run becomes current, the latest `ended`, a tie going to the greater `run_id`, whatever order the runs come in. |
 | <a id="rule-import.E6-as-sent"></a>E6 | The pointer is set exactly as sent: `run_id` (or `null`), `ended`, `machine_id`, `updated_at`; `replaces` not checked. The run named must exist, on that board and test, be complete and not deleted (else `404` / `400` as for a bench). Without `ended`, the pointer takes its run's `ended`; without `updated_at`, the server's time. |
 | <a id="rule-import.E7-E15-received-at"></a>E7, E15 | Each entry keeps its `received_at`, or stays without one when none is sent. An entry's `current` is never imported: it is computed. |
-| <a id="rule-import.E10-generation"></a>E10 | A report or export keeps the `generation` sent. One the name already holds with another file or `info`: `409 changed`, `details.current` the Artifact of that generation. |
-| <a id="rule-import.E11-E12-delete"></a>E11, E12 (delete) | The delete keeps `deleted_at`, `deleted_by`, `deleted_bench` and (a run's) `deleted_was_current` as sent. On a server offering E6 it **hands nothing on**: <a id="rule-import.delete-keeps-pointer"></a>a pointer naming the run deleted keeps naming it, until the importer sets that pointer (E6) or a purge hands it on: E5 answers it as it is, and the run's `current` stays `true`. <a id="rule-import.delete-hands-on-without-E6"></a>On a server **not** offering E6, an imported delete of a run hands the pointer on **as a bench's delete does** (5.13): to the newest remaining complete run not deleted (the latest `ended`, then the greatest `run_id`), or no pointer when none remains; a pointer there never names a deleted run. |
+| <a id="rule-import.E10-generation"></a>E10 | A report or export keeps the `generation` sent. One the name already holds with another file or `info`: `409 changed`, <a id="rule-import.E10-changed-current"></a>`details.current` the Artifact of that generation, its `info` included (what the app compares a record it moves with). |
+| <a id="rule-import.E11-E12-delete"></a>E11, E12 (delete) | The delete keeps `deleted_at`, `deleted_by`, `deleted_bench` and (a run's) `deleted_was_current` as sent. On a server offering E6 it **hands nothing on**: <a id="rule-import.delete-keeps-pointer"></a>a pointer naming the run deleted keeps naming it, until the importer sets that pointer (E6) or a purge hands it on: E5 answers it as it is, and the run's `current` stays `true`. <a id="rule-import.delete-replay"></a>An imported delete of a run or an artifact **deleted already** is a replay, as a bench's is (E11, E12): `200`, nothing changed, the first `deleted_*` (and `deleted_reason`) kept, not the ones sent. <a id="rule-import.delete-hands-on-without-E6"></a>On a server **not** offering E6, an imported delete of a run hands the pointer on **as a bench's delete does** (5.13): to the newest remaining complete run not deleted (the latest `ended`, then the greatest `run_id`), or no pointer when none remains; a pointer there never names a deleted run. |
 | <a id="rule-import.P10"></a>P10 | The release is filed under the path's `test_id` **whether or not a test holds it now** (a deleted test's releases move too). It keeps `version`, `released_at` and `test` (the name it was released under). Its documents travel whole as `documents` (the Release's own map: text, or references whose bytes are parts of the same `multipart/form-data` request, sent alone with B1, or held already) in place of `files`. Under an id no test holds, `test` and `documents` are required: without either, `400 bad_request`. Its number taken by the same release (same `content` and `fingerprint`): answered again. By another: `409 changed`. |
 
 - **Pointers are the source's where the server offers E6.** An imported run moves no pointer;

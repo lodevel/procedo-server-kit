@@ -27,6 +27,8 @@ BENCH_APP_ID = "Procedo.Bench"
 STUDIO_APP_ID = "Procedo.Studio"
 #: Procedo Studio's own settings folder, inside the roaming folder.
 _STUDIO_DIR_NAME = "studio"
+#: Each app's own machine-local folder (its log), inside the per-machine data folder.
+_BENCH_DIR_NAME = "bench"
 #: Procedo Studio's default launch command (Settings, the QSettings key WorkflowEditor/Command).
 STUDIO_COMMAND = '"{python}" -m procedo.studio'
 
@@ -59,6 +61,17 @@ def local_data_dir() -> Path:
 def studio_settings_dir() -> Path:
     """Procedo Studio's settings folder (its LLM backends and their keys), in the roaming folder."""
     return roaming_data_dir() / _STUDIO_DIR_NAME
+
+
+def bench_log_dir() -> Path:
+    """Procedo Bench's log folder (``bench.log``), machine-local: a roaming folder may be on a
+    network share and is copied at each sign-out, no place for a file written all day."""
+    return local_data_dir() / _BENCH_DIR_NAME
+
+
+def studio_log_dir() -> Path:
+    """Procedo Studio's log folder (``studio.log``), machine-local as Bench's."""
+    return local_data_dir() / _STUDIO_DIR_NAME
 
 
 def claim_taskbar_identity(app_id: str) -> None:

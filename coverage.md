@@ -52,8 +52,8 @@ contract fails the repository's tests until a kit case claims it or the gap tabl
 
 | | Rules |
 |---|---|
-| Normative rules | **378** |
-| COVERED | **363** |
+| Normative rules | **383** |
+| COVERED | **368** |
 | GAP | **0** |
 | HAND | **14** |
 | UNTESTABLE | **1** |
@@ -64,12 +64,12 @@ By section (COVERED / all):
 - 2. Conventions: 36/36
 - 3. Address, headers, discovery, authentication, transport: 32/38
 - 4. Errors: 14/19
-- 5. The objects: 77/77
+- 5. The objects: 80/80
 - 6.1–6.2 Rules shared by the calls, and how bytes travel: 28/29
 - 6.3 Projects, tests and releases: 40/40
 - 6.4 Evidence: 84/85
 - 6.5 The library, 6.6 storages and large files: 28/29
-- 6.7 The import: 14/14
+- 6.7 The import: 16/16
 - 6.8 The server's users: 5/5
 - 7. Storages the app reaches itself: 4/5
 - 9. The machine-readable twin: 1/1
@@ -233,9 +233,12 @@ By section (COVERED / all):
 | [`5.9.data`](procedo_server_contract.md#rule-5.9.data) | 5.9 | `data` holds each slot's current entry in the stated shape. | COVERED | `ev-raw::test_an_annotations_current_entries_and_data_are_the_servers` |
 | [`5.10.serial-by-kind-400`](procedo_server_contract.md#rule-5.10.serial-by-kind-400) | 5.10, E10 | An export with a serial, a report or draft without one: `400`. | COVERED | `ev-raw::test_an_export_with_a_serial_and_a_report_or_draft_without_one_are_refused` |
 | [`5.10.artifact-fields`](procedo_server_contract.md#rule-5.10.artifact-fields) | 5.10 | `work_order`, `fields`, `generated`, `verdict`, `operator`, `tests`, `updated_at` are stored and answered. | COVERED | `ev-raw::test_an_artifacts_fields_and_records_read_back_as_pushed` |
+| [`5.10.report-info-required`](procedo_server_contract.md#rule-5.10.report-info-required) | 5.10, E10 | A report without `info` (its record) is `400 bad_request`, nothing written. | COVERED | `ev-raw::test_a_report_without_its_record_is_refused` |
 | [`5.10.generations`](procedo_server_contract.md#rule-5.10.generations) | 5.10, E10 | A report or export keeps every generation, numbered 1, 2, …; never replaced. | COVERED | `ev:reports_and_exports_keep_every_generation` |
 | [`5.10.artifact-missing`](procedo_server_contract.md#rule-5.10.artifact-missing) | 5.10 | An artifact's `missing`. | COVERED | `ev-raw::test_a_file_gone_from_the_api_storage_is_reported_missing` |
 | [`5.10.draft-version`](procedo_server_contract.md#rule-5.10.draft-version) | 5.10 | A draft's `sha256` is the app's; the server stores it and never computes it. | COVERED | `ev:a_draft_is_replaced_only_when_unchanged_since_it_was_read` |
+| [`5.10.report-page-optional`](procedo_server_contract.md#rule-5.10.report-page-optional) | 5.10, E8, E9 | A report is answered with its `info` exactly, and either with its page (`size`, `store_id`, its part) or kept without it (its `sha256` as sent, no `size`, `store_id` or part). | COVERED | `ev-raw::test_a_report_reads_back_as_its_record_with_its_page_or_without` |
+| [`5.10.report-page-never-refused`](procedo_server_contract.md#rule-5.10.report-page-never-refused) | 5.10, E10 | A server keeping a report without its page never refuses one for its page: a report sent with no part, a new generation included, is taken (no `409 missing_files`). | COVERED | `ev-raw::test_a_report_reads_back_as_its_record_with_its_page_or_without` |
 | [`5.10.info-key-order`](procedo_server_contract.md#rule-5.10.info-key-order) | 5.10 | `info` and `content` are kept with their key order at every level. | COVERED | `ev-raw::test_an_artifacts_fields_and_records_read_back_as_pushed` |
 | [`5.11.lot-details`](procedo_server_contract.md#rule-5.11.lot-details) | 5.11 | `lot` and `details` are the current entries' values. | COVERED | `ev-raw::test_a_boards_lot_and_details_are_its_current_entries` |
 | [`5.11.board-times`](procedo_server_contract.md#rule-5.11.board-times) | 5.11 | `created_at`, `last_ended` (runs not deleted only). | COVERED | `ev-raw::test_a_boards_times_and_a_board_whose_runs_are_all_gone_is_still_listed`, `ev-raw::test_a_boards_times_are_its_creation_and_its_last_run` |
@@ -482,8 +485,10 @@ By section (COVERED / all):
 | [`import.E6-as-sent`](procedo_server_contract.md#rule-import.E6-as-sent) | 6.7 | The pointer is set exactly as sent, `replaces` unchecked; the run must still exist, complete, not deleted. | COVERED | `pr-raw::test_an_imported_pointer_is_set_exactly_as_sent` |
 | [`import.E7-E15-received-at`](procedo_server_contract.md#rule-import.E7-E15-received-at) | 6.7 | Entries keep `received_at` (or none); `current` is computed. | COVERED | `pr-raw::test_imported_entries_keep_their_received_at_or_none` |
 | [`import.E10-generation`](procedo_server_contract.md#rule-import.E10-generation) | 6.7 | A report keeps the `generation` sent; one held with other content: `409 changed`. | COVERED | `pr-raw::test_an_imported_report_keeps_its_generation` |
+| [`import.E10-changed-current`](procedo_server_contract.md#rule-import.E10-changed-current) | 6.7 | An imported generation refused `409 changed` answers `details.current`, the Artifact of that generation with its `info`. | COVERED | `pr-raw::test_an_imported_report_keeps_its_generation` |
 | [`import.E11-E12-delete`](procedo_server_contract.md#rule-import.E11-E12-delete) | 6.7 | A delete keeps `deleted_*` as sent; on a server offering E6 it hands nothing on. | COVERED | `pr-raw::test_an_imported_delete_keeps_its_fields_and_hands_nothing_on` |
 | [`import.delete-keeps-pointer`](procedo_server_contract.md#rule-import.delete-keeps-pointer) | 6.7, E11 | After an imported delete, a pointer naming that run keeps naming it: E5 answers it, the run's `current` stays `true`, until E6 or a purge moves it. | COVERED | `pr-raw::test_after_an_imported_delete_the_pointer_keeps_naming_the_run_until_set` |
+| [`import.delete-replay`](procedo_server_contract.md#rule-import.delete-replay) | 6.7, E11, E12 | An imported delete of a run or an artifact deleted already is a replay: `200`, nothing changed, the first `deleted_*` kept. | COVERED | `ev-raw::test_an_imported_delete_of_a_deleted_item_is_a_replay` |
 | [`import.delete-hands-on-without-E6`](procedo_server_contract.md#rule-import.delete-hands-on-without-E6) | 6.7, 5.13 | On a server not offering E6, an imported delete hands the pointer on as a bench's delete does: the newest remaining complete run, or no pointer. | COVERED | `calls::test_without_e6_an_imported_delete_hands_the_pointer_on_as_a_benchs_does` |
 | [`import.P10`](procedo_server_contract.md#rule-import.P10) | 6.7, P10 | Filed under the path's id whether or not a test holds it; keeps `version`, `released_at`, `test`; `documents` in place of `files`; `test` and `documents` required under an id no test holds (`400`); the same release again answered again; another: `409 changed`. | COVERED | `pr-raw::test_an_imported_release_is_filed_under_its_id_as_sent` |
 | [`import.bench-seen-not-imported`](procedo_server_contract.md#rule-import.bench-seen-not-imported) | 6.7, 5.14 | A Bench's `first_seen`, `last_seen` are the server's own, never imported. | COVERED | `pr-raw::test_an_imported_run_keeps_its_pushed_at_and_moves_no_pointer` |

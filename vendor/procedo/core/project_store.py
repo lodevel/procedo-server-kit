@@ -448,9 +448,18 @@ class LibrarySource(Protocol):
         """Every ``<id>@<version>`` of *kind* the server publishes."""
         ...
 
-    def download(self, kind: str, item_id: str, version: str, ctx: OpContext | None = None) -> Path:
-        """``<id>@<version>`` into this PC's library: its folder. The same content here already
-        is no download; other content under that name is a conflict, nothing written."""
+    def download(
+        self,
+        kind: str,
+        item_id: str,
+        version: str,
+        ctx: OpContext | None = None,
+        *,
+        into: Path | None = None,
+    ) -> Path:
+        """``<id>@<version>`` into this PC's library (*into*: ``<into>/<id>/<version>``, which
+        no discovery scans): its folder. The same content here already is no download; other
+        content under that name is a conflict, nothing written."""
         ...
 
     def publish(self, kind: str, item_id: str, version: str, ctx: OpContext | None = None) -> Entry:

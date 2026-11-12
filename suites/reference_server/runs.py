@@ -409,6 +409,8 @@ def delete_run(call: Call) -> Answer:
             or (not with_e6 and not call.state.broken("import.delete-hands-on-without-E6"))
         ):
             moved = hand_over(call.state, project, run, fields["deleted_bench"])
+    elif importing and call.state.broken("import.delete-replay"):
+        run.deleted = {**fields, "deleted_was_current": run.deleted.get("deleted_was_current")}
     call.state.seen_bench(fields["deleted_bench"])
     answer: dict = {"run": run_answer(call.state, project, run, summary=True)}
     if moved is not NOT_MOVED and not call.state.broken("E11.answer-pointer"):

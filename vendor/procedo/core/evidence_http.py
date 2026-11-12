@@ -26,7 +26,6 @@ projects and the library alike:
 from __future__ import annotations
 
 import json
-import logging
 import ssl
 import threading
 import urllib.error
@@ -37,12 +36,10 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
-from . import http_keepalive
+from . import http_keepalive, log_redact, server_log
 from .evidence_store import Absent, AuthRequired, EvidenceError
 from .evidence_tree import OperationScope, ScopeLocal, enter_scope
 from .server_certificate import Openers, got_through, refused
-
-log = logging.getLogger(__name__)
 
 BLOCK = 1 << 16  # transfer block: the unit at which a transfer notices a cancel
 API_PREFIX = "api/v1"
@@ -300,20 +297,20 @@ class _Wire:
         if body is not None:
             sending["Content-Length"] = str(len(body))
         request = urllib.request.Request(url, data=body, headers=sending, method=method)
-        log.debug("%s %s", method, url)  # never the headers: one of them is the token
         self.requests += 1
         opener = self.openers.opener()
-        try:
-            with opener.open(request, timeout=self.endpoint.timeout_s) as response:
-                answer = _Answer(
-                    response.status, _lower(response.headers.items()), self._read(response, sink)
-                )
-        except urllib.error.HTTPError as exc:
-            answer = _Answer(exc.code, _lower(exc.headers.items()), exc.read())
-        except EvidenceError:
-            raise
-        except Exception as exc:  # every transport failure leaves as an OSError
-            raise _transport_error(exc, what or url, self) from exc
+        with server_log.http(method, url, self.base) as call:  # never a header, never a body
+            try:
+                with opener.open(request, timeout=self.endpoint.timeout_s) as response:
+                    head = (response.status, _lower(response.headers.items()))
+                    answer = _Answer(*head, self._read(response, sink))
+            except urllib.error.HTTPError as exc:
+                answer = _Answer(exc.code, _lower(exc.headers.items()), exc.read())
+            except EvidenceError:
+                raise
+            except Exception as exc:  # every transport failure leaves as an OSError
+                raise _transport_error(exc, what or url, self) from exc
+            call.answered(answer.status, answer.headers)
         got_through(self.identity)
         self._verify_signature(answer, what or url)
         if answer.status >= 400 and answer.status not in allow:
@@ -394,14 +391,15 @@ def _json_object(body: bytes) -> dict[str, Any]:
 
 def envelope(body: bytes) -> tuple[str, str, str, str]:
     """``(code, kind, message, path)`` of a §5 error body; empty strings when it is
-    not one. The server's own sentence is what the user is shown."""
+    not one. The server's own sentence is what the user is shown (and logged), as the app
+    keeps a text from outside (``log_redact.foreign``: cut short, any secret hidden)."""
     found = _json_object(body).get("error")
     if not isinstance(found, dict):
         return "", "", "", ""
     return (
         str(found.get("code") or ""),
         str(found.get("kind") or ""),
-        str(found.get("message") or ""),
+        log_redact.foreign(str(found.get("message") or "")),
         str(found.get("path") or ""),
     )
 

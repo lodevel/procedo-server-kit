@@ -797,6 +797,7 @@ def start(
     users: list[dict] | None = None,
     boards: dict[str, list[dict]] | None = None,
     unnamed_refused: bool = False,
+    report_pages: bool = True,
 ) -> tuple[str, ReferenceServer]:
     """Serve the JSON API on 127.0.0.1, a free port. ``tokens``: ``{token: [roles]}``.
 
@@ -814,7 +815,8 @@ def start(
     ``boards_registered: true``, E4 lists them before any run and E1 refuses a run on any other
     (``409 unknown_board``); None (the default), any serial run becomes a board (§3.3).
     ``unnamed_refused``: with U1, a run or a release naming nobody is refused ``409
-    unknown_operator`` (§6.8, the server's choice); taken by default.
+    unknown_operator`` (§6.8, the server's choice); taken by default. ``report_pages`` False:
+    a report is kept as its record alone, without its page (§5.10, the server's choice).
     """
     state = State(
         Path(tmp_path),
@@ -831,6 +833,7 @@ def start(
         people=users,
         boards=boards,
         unnamed_refused=unnamed_refused,
+        report_pages=report_pages,
     )
     server = ReferenceServer(state)
     server.thread = threading.Thread(

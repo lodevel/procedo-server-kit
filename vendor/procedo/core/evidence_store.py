@@ -286,11 +286,11 @@ class AccessReport:
 @dataclass(frozen=True)
 class AccessAnswer:
     """What *Check access* of a project's storage says, in words: the whole report, and for a
-    storage that keeps a run's files apart (the database) where it keeps them (``""``: not
-    read, or none)."""
+    storage that keeps a run's files apart (the database) where they go, as it read it
+    (:class:`evidence_db_place.FilesPlace`; ``None``: not read)."""
 
     text: str
-    attachments: str = ""
+    place: Any = None
 
 
 class Absent(FileNotFoundError):
@@ -364,7 +364,9 @@ class EvidenceError(Exception):
 
     ``code`` names a refusal the contract names (``data_format.md`` §7), on an ``invalid``:
     :data:`DELETED` (a run a manager purged, an artifact name a manager deleted, an entry for
-    a deleted run) or :data:`CHANGED` (a report draft changed since it was read)."""
+    a deleted run) or :data:`CHANGED` (a report draft changed since it was read); on a
+    ``not_found``, :data:`NO_PAGE`: a report kept without its page (its record is there,
+    contract §5.10), on every storage."""
 
     def __init__(
         self,
@@ -388,6 +390,12 @@ SWITCHED = "switched"  # see :class:`EvidenceError`
 #: The contract's refusal codes an ``invalid`` may carry (:attr:`EvidenceError.code`).
 DELETED = "deleted"
 CHANGED = "changed"
+NO_PAGE = "no_page"
+
+
+def no_page(name: str) -> EvidenceError:
+    """What reading the page of the report *name*, kept as its record alone, raises."""
+    return EvidenceError("not_found", f"{name} is kept without its page", code=NO_PAGE)
 
 
 # ---------------------------------------------------------------------------

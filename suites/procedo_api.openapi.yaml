@@ -985,8 +985,9 @@ paths:
         pointer naming the run keeps naming it (E5 answers it so, the run's `current` stays
         true) until the importer sets it (E6) or a purge hands it on. On a server not offering
         E6 it hands the pointer on as a bench's delete does (contract rule
-        import.delete-hands-on-without-E6). A `station` or `deleted_by_name` of `""`: `400
-        bad_request`, nothing deleted.
+        import.delete-hands-on-without-E6). An imported delete of a run deleted already is a
+        replay too: the first `deleted_*` stay (contract rule import.delete-replay). A `station`
+        or `deleted_by_name` of `""`: `400 bad_request`, nothing deleted.
       requestBody:
         required: true
         content:
@@ -1439,7 +1440,7 @@ paths:
         the Artifact of the name's newest generation. A delete without a `reason`, or with a
         blank one, is refused: `400 bad_request`; so is a `station` or `deleted_by_name` of
         `""`. Deleting a deleted artifact, or restoring one that is not deleted, is a replay:
-        `200`, unchanged.
+        `200`, unchanged; an imported delete too (contract rule import.delete-replay).
       requestBody:
         required: true
         content:
@@ -2607,20 +2608,22 @@ components:
             and answered with its keys in the order sent, at every level. A reader rebuilds the
             record's file with the app's own writer from it, so the server keeps the key order
             (a store that reorders keys, for example PostgreSQL's jsonb, does not; data_format.md
-            §4.10).
+            §4.10). A report's is required (ArtifactPush): the report is its record, its page
+            drawn from it (contract §5.10).
         content:
           type: object
           description: A draft's content; a draft has no file. Kept as `info` is, its key order included.
         sha256:
           allOf: [{$ref: "#/components/schemas/Sha256Hex"}]
           description: |
-            A report's or an export's file. A draft's version: the sha256 of its `content` as
+            A report's or an export's file (a report the server keeps without its page: its
+            page's, as sent; contract §5.10). A draft's version: the sha256 of its `content` as
             canonical JSON (keys sorted by code point, no blank between tokens, non-ASCII as
             itself, UTF-8: json.dumps(content, sort_keys=True, separators=(",", ":"),
             ensure_ascii=False)), computed by the app, stored and answered by the server, which
             never computes it.
-        size: {type: integer, minimum: 0, description: Not for a draft.}
-        store_id: {type: integer, description: Not for a draft.}
+        size: {type: integer, minimum: 0, description: "Not for a draft, nor for a report the server keeps without its page (contract §5.10)."}
+        store_id: {type: integer, description: "Not for a draft, nor for a report the server keeps without its page (contract §5.10)."}
         missing:
           type: object
           readOnly: true
@@ -2664,6 +2667,10 @@ components:
             import:
               type: boolean
               description: true for a report or export moved in from another storage, sent with its `generation` (data_format.md §6.10). Only on a server listing `import` in `/info`'s `calls` (contract §6.1); elsewhere `501 unsupported`, nothing written.
+      if:
+        properties: {kind: {const: report}}
+      then:
+        required: [info]
     ArtifactMultipart:
       $ref: "#/components/schemas/MultipartBody"
       description: "`json` is an Artifact (an ArtifactPush, in a request); its file's part for an api storage."

@@ -43,6 +43,7 @@ from . import (
     project_origin,
     project_sync,
     project_sync_api,
+    project_sync_log,
     project_sync_pass,
     project_sync_release,
     project_sync_scan,
@@ -53,7 +54,7 @@ from . import (
 )
 from .evidence_store import REGISTRY, EvidenceError, OpContext
 from .evidence_store_fs import os_error
-from .evidence_tree import TreeIO
+from .evidence_tree import TreeIO, name_key
 from .paths import inside
 from .project_origin import Origin
 from .project_source import SyncLock, share_of
@@ -311,6 +312,7 @@ class SyncGateway:
 
     # -- the passes ------------------------------------------------------------------
 
+    @project_sync_log.logged("Pull")
     def pull(
         self,
         working_copy: Path,
@@ -342,6 +344,7 @@ class SyncGateway:
             progress=progress,
         )
 
+    @project_sync_log.logged("Push")
     def push(
         self,
         working_copy: Path,
@@ -364,6 +367,7 @@ class SyncGateway:
             approved_deletes=approved_deletes,
         )
 
+    @project_sync_log.logged("Restore")
     def restore(
         self, working_copy: Path, paths: frozenset[str], *, ctx: OpContext | None = None
     ) -> SyncReport:
@@ -404,6 +408,7 @@ class SyncGateway:
         """
         return project_sync.status(Path(working_copy))
 
+    @project_sync_log.logged("Checkout", project_at=2)
     def checkout(
         self,
         backend: str,
@@ -460,6 +465,7 @@ class SyncGateway:
                 continue
         return None
 
+    @project_sync_log.logged("Publish", project_at=3)
     def publish(
         self,
         working_copy: Path,
@@ -490,6 +496,7 @@ class SyncGateway:
             ctx=ctx,
         )
 
+    @project_sync_log.logged("Repoint")
     def repoint(
         self,
         working_copy: Path,
@@ -536,17 +543,34 @@ class SyncGateway:
         server that keeps projects itself."""
         if not self.has_folders(backend):
             source = self.source(backend, params)
-            name = PurePosixPath(base).name.casefold()
+            name = name_key(PurePosixPath(base).name)  # the database's way: NFC, case folded
             listed = source.list_projects(ctx)
-            found = [p.project_id for p in listed if p.name.casefold() == name]
+            found = [p.project_id for p in listed if name_key(p.name) == name]
             return (found[0] if found else ""), str(source.identity)
         tree = self.tree(backend, params)
-        try:
-            with project_sync_pass.operation(tree, ctx):
-                data = tree.read_bytes(self._base(tree, base) / project_origin.CONFIG_FILE)
-        except OSError as exc:
-            raise os_error(exc) from exc
+        data = _config_in(tree, self._base(tree, base), ctx)
         return project_origin.project_id_of(data), str(tree.identity)
+
+    def project_config(
+        self, backend: str, params: dict[str, Any], base: str, ctx: OpContext
+    ) -> bytes:
+        """The ``config/config.json`` of the project at *base* as the server holds it now (not
+        this PC's working copy of it): read through a tree, or from the project a server keeping
+        projects itself holds under that name. ``not_found`` when no project is there."""
+        if self.has_folders(backend):
+            tree = self.tree(backend, params)
+            return _config_in(tree, self._base(tree, base), ctx)
+        found, _identity = self._project_at(backend, params, base, ctx)
+        if not found:
+            raise EvidenceError("not_found", f"No project is at {base}.")
+        source = self.source(backend, params)
+        ref = source.read_project(found, ctx).files.get(project_origin.CONFIG_FILE)
+        if ref is None:
+            raise EvidenceError("not_found", f"{base} holds no {project_origin.CONFIG_FILE}.")
+        if ref.text is not None:
+            return ref.text.encode("utf-8")
+        with tempfile.TemporaryDirectory(prefix="procedo-config-") as folder:
+            return source.fetch(found, ref, Path(folder) / "config.json", ctx).read_bytes()
 
     def occupant(
         self, backend: str, params: dict[str, Any], base: str, ctx: OpContext
@@ -573,6 +597,7 @@ class SyncGateway:
         except OSError as exc:
             raise os_error(exc) from exc
 
+    @project_sync_log.logged("Test rename")
     def rename_test(
         self,
         working_copy: Path,
@@ -601,6 +626,7 @@ class SyncGateway:
             Path(working_copy), source, old, new, folder=folder, ctx=ctx or OpContext()
         )
 
+    @project_sync_log.logged("Release")
     def release(
         self,
         working_copy: Path,
@@ -633,19 +659,23 @@ class SyncGateway:
 
     # -- browsing --------------------------------------------------------------------
 
-    def folders(self, backend: str, params: dict[str, Any], base: str = "") -> list[str]:
+    def folders(
+        self, backend: str, params: dict[str, Any], base: str = "", ctx: OpContext | None = None
+    ) -> list[str]:
         """The folder names directly under *base* (the endpoint's own root by default).
 
         Folders only: a project is a folder, and listing the files beside them would
         only give the user something to pick that cannot be checked out. A server that keeps
-        projects itself answers its projects' names: what *Check access* lists there.
+        projects itself answers its projects' names: what *Check access* lists there. *ctx*:
+        the caller's, whose Cancel stops the listing.
         """
+        ctx = ctx or OpContext()
         if not self.has_folders(backend):
-            return sorted(p.name for p in self.source(backend, params).list_projects())
+            return sorted(p.name for p in self.source(backend, params).list_projects(ctx))
         tree = self.tree(backend, params)
         root = self._base(tree, base) if base else tree.root
         try:
-            with project_sync_pass.operation(tree, OpContext()):
+            with project_sync_pass.operation(tree, ctx):
                 names = tree.list_names(root)
                 if names is None:
                     raise EvidenceError("not_found", f"{root} is not a folder on the server")
@@ -696,6 +726,7 @@ class SyncGateway:
         except OSError as exc:
             raise os_error(exc) from exc
 
+    @project_sync_log.logged("New folder", project_at=2)
     def make_folder(self, backend: str, params: dict[str, Any], folder: str) -> None:
         """Create ONE folder on the server; its parent must already be there.
 
@@ -712,6 +743,7 @@ class SyncGateway:
 
     # -- the local-only recovery ------------------------------------------------------
 
+    @project_sync_log.logged("Forget")
     def forget(self, working_copy: Path) -> tuple[bool, bool]:
         """Drop THIS machine's working copy of a project: the record, then the folder.
 
@@ -853,6 +885,7 @@ class SyncGateway:
         except OSError as exc:
             raise os_error(exc) from exc
 
+    @project_sync_log.logged("Conflict answer")
     def resolve(
         self, working_copy: Path, paths: list[str], keep: str, *, ctx: OpContext | None = None
     ) -> SyncReport:
@@ -878,6 +911,7 @@ class SyncGateway:
             for copy in working_copy_cleanup.candidates(keep)
         ]
 
+    @project_sync_log.logged("Push of a kept copy")
     def push_kept(
         self, working_copy: Path, *, ctx: OpContext | None = None
     ) -> working_copy_cleanup.Outcome:
@@ -899,7 +933,7 @@ class SyncGateway:
             self.pull(
                 working_copy,
                 ctx=ctx,
-                hold=lambda: working_copy_claims.live(working_copy, working_copy_claims.RUN),
+                hold=lambda: working_copy_claims.holds_landing(working_copy),
             )
             self.push(working_copy, ctx=ctx)
         except (OSError, EvidenceError) as exc:
@@ -929,6 +963,15 @@ class SyncGateway:
 
 
 _DEFAULT = SyncGateway()
+
+
+def _config_in(tree: TreeIO, root: PurePath, ctx: OpContext) -> bytes:
+    """The ``config/config.json`` of the project whose folder is *root* in a server's *tree*."""
+    try:
+        with project_sync_pass.operation(tree, ctx):
+            return tree.read_bytes(root / project_origin.CONFIG_FILE)
+    except OSError as exc:
+        raise os_error(exc) from exc
 
 
 def gateway() -> SyncGateway:

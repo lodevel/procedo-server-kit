@@ -12,6 +12,7 @@ import errno
 import json
 import logging
 import os
+import re
 import socket
 import time
 import uuid
@@ -25,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 _CONFIG = Path("config") / "config.json"
 LOCK_NAME = ".project_id.lock"
+#: The shape :func:`_mint` gives an id, exactly: a lower-case version-4 UUID.
+_MINTED = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 _LOCK_WAIT_S = 30.0
 #: The lock is taken on a byte PAST everything the owner record occupies, so waiting
 #: writers can still read that record: a Windows byte-range lock refuses reads of the
@@ -250,6 +253,12 @@ def _acquire_lock(lock: Path, *, strict: bool = False, wait_s: float | None = No
                 "initializing this project; open it again once that has finished."
             )
         time.sleep(min(0.05, remaining))
+
+
+def is_minted(text: str) -> bool:
+    """Whether *text* has exactly the shape an id this module mints has (a read from outside, a
+    zip's manifest, is held to it before it names anything on this PC)."""
+    return bool(_MINTED.fullmatch(text))
 
 
 def _mint(path: Path) -> str:

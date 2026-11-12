@@ -14,12 +14,17 @@ schedule applies; :meth:`release` when it is sent, parked, deleted or routed els
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections.abc import Callable, Iterable
 from typing import TypeVar
 
+from . import failure_log
 from .paths import place_key
+
+log = logging.getLogger(__name__)
+_repeats = failure_log.Repeats(log)  # an outage said once, not at each try
 
 STEPS_MIN = (1, 2, 4, 8, 15, 30, 60)
 
@@ -97,9 +102,15 @@ class PushBackoff:
                 getattr(exc, "kind", "") != "cancelled"
             ):  # the caller stopped it: the store did not fail
                 # a lock wait names its holder in one line (``EvidenceLocked.summary``)
-                self.failed(root, getattr(exc, "summary", "") or str(exc))
+                why = getattr(exc, "summary", "") or str(exc)
+                self.failed(root, why)
+                next_try = _in_words(self.next_in_s(root))
+                said = f"Uploads to {root} not sent: {why}; next try {next_try}"
+                _repeats.failed(f"Uploads to {root}", exc, said)
             raise
         if pushed:
+            _repeats.worked(f"Uploads to {root}")
+            log.info("%d upload%s sent to %s", len(pushed), "" if len(pushed) == 1 else "s", root)
             self.reset(root)
             with self._lock:
                 self._failures.pop(place_key(root), None)
@@ -111,12 +122,17 @@ BACKOFF = PushBackoff()
 
 def retry_now(root: str | None = None) -> None:
     """The outbox window's "retry now": the next flush tries ``root`` (all: ``None``)."""
+    log.info("Retry now: uploads to %s", root or "every destination")
     BACKOFF.reset(root)
 
 
 def next_attempt_in(root: str) -> str:
     """``in 4 min`` (whole minutes, rounded up, at least 1), ``in 1 h`` from an hour on."""
-    minutes = max(1, -(-int(BACKOFF.next_in_s(root)) // 60))
+    return _in_words(BACKOFF.next_in_s(root))
+
+
+def _in_words(seconds: float) -> str:
+    minutes = max(1, -(-int(seconds) // 60))
     return "in 1 h" if minutes >= 60 else f"in {minutes} min"
 
 

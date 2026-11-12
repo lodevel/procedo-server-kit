@@ -93,7 +93,8 @@ against your server").
 To see what the kit makes of a server offering some optional calls only (§6.1), start it with
 `--calls`: `--calls none` offers the core calls alone, `--calls P3,E2,U1` those three besides.
 The cases needing a call it does not offer are then skipped, each naming the call (see "A
-server offering some optional calls only").
+server offering some optional calls only"). `--no-report-pages` shows a server keeping each
+report as its record alone ([§5.10](procedo_server_contract.md#rule-5.10.report-page-optional)).
 
 ## Prepare your server
 

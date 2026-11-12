@@ -13,7 +13,8 @@ the server's identity and the project:
   comes with the next read that the server can give it in (a file put back on its storage).
 * **An artifact** is its file (a draft: its content) with its record written beside it as its
   sidecar, each in the bytes the app itself writes them (:data:`RECORD_BYTES`): the API keeps
-  a record and a draft as JSON objects, not as files.
+  a record and a draft as JSON objects, not as files. A report the server keeps without its
+  page (:func:`without_page`) is its record alone.
 
 Qt-free.
 """
@@ -34,7 +35,7 @@ from .evidence_api_run import manifest_of
 from .evidence_missing import DAMAGED, MISSING, NOT_FOUND, UNREACHABLE
 from .evidence_remote_cache import CACHE_MARK, record_missing
 from .evidence_shared_manifest import MANIFEST
-from .evidence_store import EvidenceError
+from .evidence_store import EvidenceError, no_page
 from .evidence_store_fs import _read_json, _sidecars
 from .evidence_tree import safe_relative
 from .paths import rmtree
@@ -144,15 +145,33 @@ def _place_file(staging: Path, local: Path, f: dict, parts: dict[str, bytes], to
     return UNREACHABLE
 
 
-def place_artifact(local: Path, kind: str, data: bytes | None, record: Any) -> None:
-    """An artifact's file, and its record as its sidecar (a report: ``<stem>.json``; an
-    export: ``<name>.meta.json``); ``data`` ``None`` keeps the file there (the read said it
-    held it). A draft is its content, in the app's bytes."""
+def without_page(kind: str, artifact: dict[str, Any]) -> bool:
+    """Whether the server keeps the report *artifact* without its page (contract §5.10): it
+    answers no ``store_id``, as a draft, and the app draws the page again from its record."""
+    return kind == "report" and "store_id" not in artifact
+
+
+def page_bytes(local: Path, name: str) -> bytes:
+    """The cached file at *local*; a report kept without its page is :func:`no_page`."""
+    try:
+        return local.read_bytes()
+    except FileNotFoundError:
+        raise no_page(name) from None
+
+
+def place_artifact(local: Path, kind: str, data: bytes | None, artifact: dict[str, Any]) -> None:
+    """The *artifact* E9 answered: its file, and its record as its sidecar (a report:
+    ``<stem>.json``; an export: ``<name>.meta.json``); ``data`` ``None`` keeps the file there
+    (the read said it held it), and none stays for a report kept without its page. A draft is
+    its content, in the app's bytes."""
     local.parent.mkdir(parents=True, exist_ok=True)
     if kind == "draft":
-        atomic_write.write_bytes(local, RECORD_BYTES["draft"](record))
+        atomic_write.write_bytes(local, RECORD_BYTES["draft"](artifact.get("content")))
         return
-    if data is not None:
+    record = artifact.get("info")
+    if without_page(kind, artifact):
+        local.unlink(missing_ok=True)
+    elif data is not None:
         atomic_write.write_bytes(local, data)
     sidecar = _sidecars(kind, local)[0]
     if isinstance(record, dict):

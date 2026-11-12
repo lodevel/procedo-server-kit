@@ -416,9 +416,12 @@ def validate_file_ref(item: object, where: str) -> None:
     req_int(item, "store_id", where)
 
 
-def validate_artifact(art: dict, *, blank_serial_ok: bool = False) -> int:
+def validate_artifact(
+    art: dict, *, blank_serial_ok: bool = False, info_optional: bool = False
+) -> int:
     """An Artifact as E10 receives it (§4.10). Returns its format_version.
-    ``blank_serial_ok``: a report or draft may have serial ``""``, a fault."""
+    ``blank_serial_ok``: a report or draft may have serial ``""``, a fault; ``info_optional``:
+    a report may come without its record, a fault."""
     where = "artifact"
     version = format_version(art, "artifact", ARTIFACT_FORMAT)
     kind = art.get("kind")
@@ -440,6 +443,8 @@ def validate_artifact(art: dict, *, blank_serial_ok: bool = False) -> int:
     opt_str(art, "work_order", where)
     string_values(art, "fields", where)
     opt_object(art, "info", where)
+    if kind == "report" and art.get("info") is None and not info_optional:
+        raise bad_request("A report is its record: it carries info, a JSON object (§5.10).")
     opt_time(art, "generated", where)
     opt_str(art, "verdict", where)
     opt_str(art, "operator", where)

@@ -14,6 +14,8 @@ the PC sees every claim: the window that syncs a copy is not always the one runn
   its own pid just before the launch, then under Studio's once it runs).
 * :data:`RUN` — a test runs from the copy (an automated queue or a guided run), from before it
   reads its first file until it ends: a sync pass lands nothing in the copy meanwhile.
+* :data:`EXPORT` — the project is exported to a zip from the copy (``project_zip_export``):
+  nothing lands meanwhile either, so the zip is one version of it (:func:`holds_landing`).
 
 **Claim, then look** (:func:`claim`). A removal holds the copy's ``removal.lock`` from its first
 look at the claims until it is done (:func:`removing`); a claimer writes its claim, then waits for
@@ -45,8 +47,12 @@ OPEN = "open"
 STUDIO = "studio"
 #: A test runs from the copy.
 RUN = "run"
+#: The project is exported to a zip from the copy.
+EXPORT = "export"
 #: Every claim, in the order a refusal names them.
-ALL = (OPEN, STUDIO, RUN)
+ALL = (OPEN, STUDIO, RUN, EXPORT)
+#: The claims a sync pass lands nothing in the copy for (:func:`holds_landing`).
+HOLD_LANDING = (RUN, EXPORT)
 
 _PREFIX = "in_use."
 #: Held by a removal, from its first look at the claims until the copy is gone or kept.
@@ -128,6 +134,34 @@ def live(working_copy: Path | str, why: str) -> bool:
     """Whether a living process on this PC claims *working_copy* for *why*."""
     state = project_local_state.existing_state_dir(working_copy)
     return state is not None and live_in(state, why)
+
+
+def holds_landing(working_copy: Path | str) -> bool:
+    """Whether a living process on this PC reads *working_copy* as one version (a test run,
+    an export: :data:`HOLD_LANDING`): a sync pass lands nothing in it meanwhile. One look at
+    the claims; claims that cannot be read count as held."""
+    state = project_local_state.existing_state_dir(working_copy)
+    if state is None:
+        return False
+    try:
+        return any(held and kind in HOLD_LANDING for _path, kind, held in _claims(state))
+    except OSError:
+        return True
+
+
+def landing_holder(working_copy: Path | str) -> str | None:
+    """Which kind holds the landings in *working_copy* (:data:`HOLD_LANDING`): :data:`RUN`
+    when a run holds it (with an export or not: the run is what the operator watches),
+    :data:`EXPORT` when only an export does, ``None`` when nothing does. One look at the
+    claims, as :func:`holds_landing`; claims that cannot be read count as held by a run."""
+    state = project_local_state.existing_state_dir(working_copy)
+    if state is None:
+        return None
+    try:
+        kinds = {kind for _path, kind, held in _claims(state) if held and kind in HOLD_LANDING}
+    except OSError:
+        return RUN
+    return next((kind for kind in HOLD_LANDING if kind in kinds), None)
 
 
 def live_in(state: Path, why: str) -> bool:

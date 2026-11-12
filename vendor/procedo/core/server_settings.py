@@ -25,7 +25,8 @@ the secret stays in :mod:`evidence_credentials`, keyed per SERVER
 server keeps its own sign-in and one sign-in serves every folder on it.
 
 **The database** of Settings ▸ Database (one per PC, :mod:`evidence_db_settings`) is offered
-beside the servers, by its type's name (:func:`database`): a picker of a project's store shows
+beside the servers, by its type's name (:func:`database`), as a place for a project's evidence
+and for the project itself (:func:`locations`): a picker of a project's store shows
 its address read-only as it shows a server's, and :func:`chosen` / :func:`server_for` answer it
 as they answer a server. It is never one of Settings ▸ Server's list.
 
@@ -45,7 +46,13 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from . import app_settings, evidence_config, project_location, server_certificate
+from . import (
+    app_settings,
+    evidence_config,
+    project_location,
+    project_transport,
+    server_certificate,
+)
 from .evidence_config import StoreType
 from .evidence_store import (
     REGISTRY,
@@ -77,6 +84,7 @@ __all__ = [
     "name_of",
     "named",
     "names_problem",
+    "no_place_note",
     "not_offered_note",
     "place_label",
     "same_server_problem",
@@ -160,12 +168,21 @@ def same_server_problem(found: list[Server]) -> tuple[int, str]:
 
 def names_problem(names: list[str]) -> str:
     """Why these names cannot be kept (``""``: they can): every server has one, and no
-    two are the same, compared case-folded — a picker offers them by name alone."""
+    two are the same, compared case-folded — a picker offers them by name alone; and none is
+    the name this PC's database is offered by (:func:`database`), so the two never read the
+    same in any list."""
+    from .evidence_db_settings import TYPE_LABEL
+
     seen: set[str] = set()
     for name in names:
         key = name.strip().casefold()
         if not key:
             return "Every server needs a name."
+        if key == TYPE_LABEL.casefold():
+            return (
+                f"{name.strip()!r} is the name this PC's database is offered by (Settings ▸ "
+                "Database). Give the server a name of its own."
+            )
         if key in seen:
             return f"Two servers are named {name.strip()!r}. Give each a name of its own."
         seen.add(key)
@@ -247,10 +264,15 @@ def available_types() -> list[LocationType]:
 
 
 def locations() -> list[LocationType]:
-    """Where a project can live, as every picker offers it: a folder first, then this
-    PC's servers by name (each one whose type a project can live on)."""
+    """Where a project can live, as New Project offers it: a folder first, then this PC's
+    servers by name (each one whose type a project can live on), then this PC's database when
+    Settings ▸ Database names one (:func:`database`), by its name — a project lives there as
+    on a server (``project_store_db``), as *Move or Copy Project…* offers it too."""
     kinds = {t.kind for t in available_types()}
     named_servers = [s for s in servers() if s.backend in kinds]
+    found = database()
+    if found is not None and project_transport.reads_by_changes(found.backend):
+        named_servers.append(found)
     return [FOLDER_TYPE, *(LocationType(s.backend, s.name, s.name) for s in named_servers)]
 
 
@@ -350,6 +372,14 @@ def sign_in_label(backend: str, key: str) -> str:
 def unconfigured_note() -> str:
     """What a place that needs a server says when this PC has none."""
     return "No server is set on this PC — add one in Settings ▸ Server."
+
+
+def no_place_note() -> str:
+    """What a list of every server and the database says when this PC has neither."""
+    return (
+        "No server or database is set on this PC — add a server in Settings ▸ Server, or the "
+        "database in Settings ▸ Database."
+    )
 
 
 #: The app that keeps this PC's machine settings (the servers, their sign-ins, the database).

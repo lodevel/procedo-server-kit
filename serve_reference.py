@@ -1,7 +1,7 @@
 """Run the reference server on its own, as an external server the kit can be pointed at.
 
     python serve_reference.py [--port 8765] [--prefix /procedo/] [--data DIR] [--body-timeout 60]
-                              [--calls all|none|P3,E2,...] [--boards]
+                              [--calls all|none|P3,E2,...] [--boards] [--no-report-pages]
 
 It serves the JSON API on ``http://127.0.0.1:<port><prefix>`` until Ctrl+C (or until its
 standard input closes, with ``--until-stdin-closes``), behind a small front that strips the path
@@ -23,7 +23,8 @@ It offers every optional call of the contract (§6.1), U1 listing the users the 
 (``server_target.KIT_USERS``). ``--calls`` names those it offers instead (``none``: the core
 calls only): the others answer ``501 unsupported``, so the kit can be tried against a server
 offering some of them only. ``import`` is named the same way: without it, no login holds the
-importer role and an ``"import": true`` answers ``501`` (§6.1).
+importer role and an ``"import": true`` answers ``501`` (§6.1). ``--no-report-pages`` keeps each
+report as its record alone, as a server may (§5.10).
 """
 
 from __future__ import annotations
@@ -235,6 +236,11 @@ def main(argv: list[str] | None = None) -> int:
         help="register its boards itself (boards_registered, §3.3): one board, PN-1/A/SN-REG, in "
         "a new project it prints as PROCEDO_KIT_BOARDS_PROJECT",
     )
+    parser.add_argument(
+        "--no-report-pages",
+        action="store_true",
+        help="keep each report as its record alone, without its HTML page (§5.10)",
+    )
     args = parser.parse_args(argv)
     prefix = "/" + args.prefix.strip("/") + "/" if args.prefix.strip("/") else "/"
     data = args.data or Path(tempfile.mkdtemp(prefix="procedo_reference_"))
@@ -244,7 +250,13 @@ def main(argv: list[str] | None = None) -> int:
     board = {"serial": "SN-REG", "part_number": "PN-1", "board_revision": "A"}
     boards = {boards_project: [board]} if args.boards else None
     backend_url, running = start(
-        data, TOKENS, body_timeout=args.body_timeout, calls=calls, users=users, boards=boards
+        data,
+        TOKENS,
+        body_timeout=args.body_timeout,
+        calls=calls,
+        users=users,
+        boards=boards,
+        report_pages=not args.no_report_pages,
     )
     front = _FrontServer(args.port, prefix, backend_url, running.state)
     port = front.server_address[1]

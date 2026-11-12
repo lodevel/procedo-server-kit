@@ -4,7 +4,9 @@
 that is not its name's newest generation (the same ``sha256`` and ``info``) is the next
 ``generation``. A draft is replaced only when ``replaces`` is the held draft's ``sha256``, which
 the app computes and the server stores and answers, never computes. The first report or draft
-of a board creates the board.
+of a board creates the board. A report is its record (``info``, required); started with
+``report_pages`` False, the server keeps that record alone, as a server may (§5.10): the report
+is answered as a draft is, its page's ``sha256`` and no file.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ from .errors import bad_request, conflict, not_found, unsupported_filter
 from .multipart import Part
 from .runs import deletion, manager_or_import
 from .state import API_STORE_ID, ArtifactItem, ArtifactSlot, Project, State, board_key
-from .storages import check_refs, referenced_again, store_parts
+from .storages import check_refs, reclaim, referenced_again, store_parts
 from .validate import (
     ARTIFACT_KINDS,
     MACHINE_ID,
@@ -115,6 +117,8 @@ def artifact_answer(
     if state.broken("5.10.artifact-fields"):
         obj.pop("work_order", None)
         obj.pop("fields", None)
+    if state.broken("5.10.report-page-optional") and slot.kind == "report":
+        obj.pop("info", None)  # the fault: the record dropped
     if not full and not state.broken("E8.light"):
         for key in LIST_DROPS:
             obj.pop(key, None)
@@ -150,7 +154,11 @@ def push_artifact(call: Call) -> Answer:
     project_id = call.params["project_id"]
     importing = call.importing()
     broken = state.broken
-    validate_artifact(art, blank_serial_ok=broken("5.10.serial-by-kind-400"))
+    validate_artifact(
+        art,
+        blank_serial_ok=broken("5.10.serial-by-kind-400"),
+        info_optional=broken("5.10.report-info-required"),
+    )
     key = _slot_key(art["kind"], artifact_board(art), art["name"])
     if art["serial"] != "" and not importing:  # a bench's write on a board (§3.3)
         offer.note(offer.BENCH_RUN)
@@ -178,10 +186,13 @@ def push_artifact(call: Call) -> Answer:
         same = next((item for item in items if item.obj["generation"] == generation), None)
         if same is not None and not _same(same.obj, art, broken("E10.info-only-new-generation")):
             assert project is not None and slot is not None
+            current = artifact_answer(state, project, slot, same, full=True)
+            if broken("import.E10-changed-current"):
+                current.pop("info", None)  # the fault: the generation held without its record
             raise conflict(
                 "changed",
                 f"Generation {generation} of {slot.name} holds another file or record.",
-                current=artifact_answer(state, project, slot, same, full=True),
+                current=current,
             )
     else:
         file_only = broken("E10.info-only-new-generation")
@@ -193,14 +204,24 @@ def push_artifact(call: Call) -> Answer:
     if same is None:  # a replay is never refused for its board
         _check_board(call, art, key)
     refs = [(art["sha256"], art["size"], art["store_id"])]
-    to_write = check_refs(state, project_id, refs, call.parts, "artifact")
-    store_parts(state, project_id, to_write, call.parts)  # a part sent again heals a damaged blob
+    # §5.10: a server keeping a report's record alone never refuses it for its page. (The
+    # fault: kept without its page, yet refused for it.)
+    refused = broken("5.10.report-page-never-refused") and art["kind"] == "report"
+    page = art["kind"] != "report" or (state.report_pages and not refused)
+    if page or refused:
+        to_write = check_refs(state, project_id, refs, call.parts, "artifact")
+        if page:
+            store_parts(state, project_id, to_write, call.parts)  # a part sent again heals one
     if same is not None:  # a replay, also of a push made before a delete: it stays deleted
         assert project is not None and slot is not None
         answer = artifact_answer(state, project, slot, same, full=True)
         return Answer({"status": "already", "artifact": answer})
 
-    referenced_again(state, project_id, refs)
+    if page:
+        referenced_again(state, project_id, refs)
+    else:  # kept as a draft is: its sha256, no file
+        stored_obj.pop("size", None)
+        stored_obj.pop("store_id", None)
     project = state.ensure_project(project_id, None)
     slot = _ensure_slot(state, project, key, art)
     _register_board(call, art, key)
@@ -210,6 +231,8 @@ def push_artifact(call: Call) -> Answer:
     item = ArtifactItem(obj=stored_obj)
     slot.items.append(item)
     slot.items.sort(key=lambda i: i.obj["generation"])
+    if not page and state.storage_of(art["store_id"]) is not None:
+        reclaim(state, project, {(art["store_id"], art["sha256"])})  # the page: no one's
     state.seen_bench(art["machine_id"])
     answer = artifact_answer(state, project, slot, item, full=True)
     return Answer({"status": "saved", "artifact": answer})
@@ -515,7 +538,10 @@ def delete_artifact(call: Call) -> Answer:
     importing = manager_or_import(call, allow_import=True)
     fields = deletion(call, importing)
     project, slot = _find_slot(call)
-    if slot.deleted is None or call.state.broken("E12.replays"):
+    replaced = call.state.broken("E12.replays") or (
+        importing and call.state.broken("import.delete-replay")
+    )
+    if slot.deleted is None or replaced:
         slot.deleted = fields
     call.state.seen_bench(fields["deleted_bench"])
     return Answer(artifact_answer(call.state, project, slot, slot.latest(), full=True))

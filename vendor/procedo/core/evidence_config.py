@@ -55,6 +55,10 @@ from .project_never_travels import EVIDENCE_DIRNAME
 log = logging.getLogger(__name__)
 
 SECTION = "evidence_store"
+#: A TEMPLATE's database entry may name where a project's runs' files go
+#: (:func:`evidence_db_place.template_place`); a project's own entry never carries it: the
+#: database keeps a project's place.
+FILES_KEY = "files"
 
 
 def default_spec(project_root: Path) -> dict[str, Any]:
@@ -328,9 +332,11 @@ def template_entry(spec: dict[str, Any]) -> dict[str, Any]:
     """A template's entry as a project may take it: a team CONVENTION, never an
     identity. ``project_id`` is minted per project and names whose evidence a folder
     holds; a template that carried one would hand every project seeded from it the
-    same claim, and the second would be refused from its own evidence folder."""
+    same claim, and the second would be refused from its own evidence folder. Nor its files'
+    place (:data:`FILES_KEY`): the database keeps a project's."""
     entry = copy.deepcopy(spec)
     entry.pop("project_id", None)
+    entry.pop(FILES_KEY, None)
     return entry
 
 

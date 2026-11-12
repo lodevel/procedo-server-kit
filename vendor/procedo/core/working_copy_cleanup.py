@@ -17,7 +17,8 @@ keeps the copy exactly as it is (:func:`remove_if_clean`, one copy at a time, on
 2. **The sync lock** is taken without waiting: another Bench window that syncs it keeps it.
 3. **Nothing is waiting**, by the offline ``status``: no upload, no conflict, no "missing here"
    question, no pull owed, no removal the app noted (Studio may be making it right now).
-4. **No live claim** (``working_copy_claims``): a Bench window that has it open, Studio, a run —
+4. **No live claim** (``working_copy_claims``): a Bench window that has it open, Studio, a run,
+   an export to a zip —
    looked at under the copy's removal lock, held from here to the end. A claimer writes its claim,
    waits for that lock, and only then looks for the folder, so one of the two sees the other.
 5. **Set aside**: the folder is renamed to ``<name>.removing`` beside it. Windows refuses that

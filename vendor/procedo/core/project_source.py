@@ -42,11 +42,7 @@ def resolve(path: Path | str) -> Path:
     mapped drive turned into its ``\\\\server\\share`` path (``os.path.realpath``). The
     ``\\\\?\\`` long-path prefix is taken off first, so a local ``\\\\?\\C:\\…`` does not read as
     a UNC path; ``\\\\?\\UNC\\server\\…`` stays the share it names."""
-    text = str(path)
-    if text.startswith("\\\\?\\UNC\\"):
-        text = "\\\\" + text[len("\\\\?\\UNC\\") :]
-    elif text.startswith("\\\\?\\"):
-        text = text[len("\\\\?\\") :]
+    text = paths.short_text(str(path))
     if os.name != "nt" and text.startswith(("\\\\", "//")):
         return Path(text)  # a share path named on a machine that cannot resolve it
     return Path(os.path.realpath(text))

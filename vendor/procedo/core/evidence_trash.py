@@ -79,7 +79,7 @@ _STAMP = "%Y-%m-%dT%H:%M:%SZ"
 REASON_REQUIRED = "Type a reason: a deletion is kept with its reason."
 GONE = "That deletion is no longer in the evidence trash."
 #: Beside a deleted item's place: what became of it (:func:`tombstone`).
-TOMBSTONE = ".deleted.json"
+TOMBSTONE = evidence_index.TOMBSTONE
 RESTORED_AT, PURGED_AT = "restored_at", "purged_at"
 
 

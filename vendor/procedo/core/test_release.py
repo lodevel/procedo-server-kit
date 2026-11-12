@@ -96,6 +96,8 @@ _ATTEMPTS = 100
 class Refused(Exception):
     """A release that cannot be made; the message is for the user."""
 
+    refusal = True  # said to the user, no failure of the app (project_sync_log)
+
 
 @dataclass(frozen=True)
 class Release:

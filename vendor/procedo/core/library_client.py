@@ -284,8 +284,17 @@ class ServerLibrary:
                         out.append(entry)
         return sorted(out, key=lambda e: (e.id, e.version))
 
-    def download(self, kind: str, item_id: str, version: str, ctx: OpContext | None = None) -> Path:
-        """Copy ``<id>@<version>`` into this PC's library (:func:`install`); return its folder."""
+    def download(
+        self,
+        kind: str,
+        item_id: str,
+        version: str,
+        ctx: OpContext | None = None,
+        *,
+        into: Path | None = None,
+    ) -> Path:
+        """Copy ``<id>@<version>`` into this PC's library (*into*: under that folder instead,
+        :func:`install`); return its folder."""
         spec = KINDS[kind]
         tree, root = self.tree_for(kind)
         with project_sync_pass.operation(tree, ctx or OpContext()):
@@ -295,7 +304,10 @@ class ServerLibrary:
                     "not_found", f"{item_id}@{version} is not in the {spec.label} library there."
                 )
             return install(
-                kind, remote, lambda staging: _fetch_tree(tree, root / item_id / version, staging)
+                kind,
+                remote,
+                lambda staging: _fetch_tree(tree, root / item_id / version, staging),
+                into=into,
             )
 
     def publish(self, kind: str, item_id: str, version: str, ctx: OpContext | None = None) -> Entry:
@@ -350,9 +362,12 @@ def to_publish(kind: str, item_id: str, version: str) -> Entry:
     return entry
 
 
-def install(kind: str, remote: Entry, fill: Callable[[Path], None]) -> Path:
+def install(
+    kind: str, remote: Entry, fill: Callable[[Path], None], *, into: Path | None = None
+) -> Path:
     """``<id>@<version>`` the server publishes (*remote*, its declared hash) into this PC's
-    library, *fill* writing its files into a staging folder; its folder.
+    library (*into*: ``<into>/<id>/<version>``, a folder no discovery scans), *fill* writing
+    its files into a staging folder; its folder.
 
     Content that is already here is not copied again — nothing at all is
     written. DIFFERENT content under the same name is a conflict: this
@@ -361,7 +376,11 @@ def install(kind: str, remote: Entry, fill: Callable[[Path], None]) -> Path:
     nothing is installed (:func:`_require_declared`).
     """
     spec = KINDS[kind]
-    target = local_folder(kind, remote.id, remote.version)
+    target = (
+        local_folder(kind, remote.id, remote.version)
+        if into is None
+        else (into / remote.id / remote.version)
+    )
     local = library_entry.read(kind, target)
     # The VERSION too: a configuration keeps one folder per name, and the
     # same bytes under another version number are another library item.

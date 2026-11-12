@@ -49,7 +49,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from . import evidence_artifact_generations, evidence_outbox, server_certificate
+from . import evidence_api_cache, evidence_artifact_generations, evidence_outbox, server_certificate
 from .evidence_api_cache import (
     forget_artifact,
     held,
@@ -101,6 +101,7 @@ from .evidence_store import (
     RunInfo,
     check_test_id,
     guard_component,
+    no_page,
     register,
 )
 from .evidence_store_api_search import ApiSearch
@@ -636,9 +637,9 @@ class ApiStore(ApiSearch, LocalStaging):
         have: str | None = None,
         generation: int | None = None,
     ) -> tuple[dict[str, Any], bytes | None]:
-        """E9: the artifact and its file's bytes (``None``: a draft, or the bytes ``have``
-        names). A deleted one is ``not_found``, and so is one whose file the server cannot
-        give."""
+        """E9: the artifact and its file's bytes (``None``: a draft, a report without its page,
+        or the bytes ``have`` names). A deleted one is ``not_found``, and so is one whose file
+        the server cannot give."""
         query: dict[str, str | int] = dict(_board_of_artifact(kind, key))
         if generation is not None:
             query["generation"] = generation
@@ -649,7 +650,7 @@ class ApiStore(ApiSearch, LocalStaging):
         artifact = answer.data
         if artifact.get("deleted_at"):
             raise EvidenceError("not_found", f"the {kind} {name} of {key} was deleted")
-        if kind == "draft":
+        if kind == "draft" or evidence_api_cache.without_page(kind, artifact):
             return artifact, None
         sha256 = str(artifact.get("sha256") or "")
         data = answer.parts.get(version(sha256))
@@ -680,8 +681,7 @@ class ApiStore(ApiSearch, LocalStaging):
                 raise
             forget_artifact(local, kind)
             return False
-        record = artifact.get("content") if kind == "draft" else artifact.get("info")
-        place_artifact(local, kind, data, record)
+        place_artifact(local, kind, data, artifact)
         return True
 
     def read_artifact(
@@ -698,7 +698,7 @@ class ApiStore(ApiSearch, LocalStaging):
         with self._op(ctx):
             if not self._materialize_artifact(kind, project_id, board, name, local):
                 raise EvidenceError("not_found", f"no {kind} {name!r} for {board}")
-        return local.read_bytes()
+        return evidence_api_cache.page_bytes(local, name)
 
     def list_generations(
         self, kind: str, project_id: str, board: str, name: str, ctx: OpContext | None = None
@@ -729,9 +729,9 @@ class ApiStore(ApiSearch, LocalStaging):
         if kind not in evidence_artifact_generations.KEPT:
             raise EvidenceError("invalid", f"a {kind} keeps no generations")
         with self._op(ctx):
-            _artifact, data = self._get_artifact(
-                kind, project_id, board, name, generation=generation
-            )
+            found, data = self._get_artifact(kind, project_id, board, name, generation=generation)
+        if evidence_api_cache.without_page(kind, found):
+            raise no_page(name)
         return data or b""
 
     def delete_artifact(

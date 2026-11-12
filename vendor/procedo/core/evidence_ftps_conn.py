@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any
 
+from . import server_log
 from .evidence_store import Absent, AuthRequired, EvidenceError
 
 log = logging.getLogger(__name__)
@@ -210,6 +211,7 @@ def _context(endpoint: FtpsEndpoint) -> ssl.SSLContext:
     return ctx
 
 
+@server_log.connecting("FTPS", lambda endpoint, *_args, **_kw: endpoint.identity)
 def connect(endpoint: FtpsEndpoint, credentials: Credentials | None) -> ftplib.FTP:
     """One logged-in connection with ``PROT P`` set (or plain FTP when ``insecure``)."""
     user, password = ("", "")

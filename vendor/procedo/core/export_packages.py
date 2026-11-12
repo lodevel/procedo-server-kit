@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -271,6 +272,30 @@ def get_default_report_package(project_path: Path | None) -> ExportPackage | Non
         kind="html",
         project_dir=project_reports_dir(project_path) if project_path is not None else None,
     )
+
+
+def find_report_package(
+    project_path: Path | None, package_id: str, version: str, *, also: Sequence[Path] = ()
+) -> ExportPackage | None:
+    """The ``html`` report package *package_id* at exactly *version* on this PC, or None: one
+    of the templates discovered for *project_path* (its own, the switched-on packages'), else
+    that version in this PC's library (:func:`local_reports_dir`, which keeps every version
+    downloaded), else under one of *also* (``<id>/<version>``: folders no discovery scans, where
+    a report drawn again keeps the templates it took from a server and a project zip's carried
+    ones are kept). Another version of it is not it."""
+    project_dir = project_reports_dir(project_path) if project_path is not None else None
+    for pkg in _in_discovery_order(project_path, project_dir):
+        if (pkg.kind, pkg.package_id, pkg.version) == ("html", package_id, version):
+            return pkg
+    for root in (local_reports_dir(), *also):
+        try:
+            pkg = load_export_package(root / package_id / version, package_store.LOCAL_NAME)
+        except (OSError, ValueError) as exc:
+            log.debug("report template %s@%s not in %s: %s", package_id, version, root, exc)
+            continue
+        if (pkg.kind, pkg.package_id, pkg.version) == ("html", package_id, version):
+            return pkg
+    return None
 
 
 def _get_default_id(project_path: Path, key: str) -> str | None:

@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote, urlencode
 
-from . import server_offer
+from . import server_log, server_offer
 from .evidence_http import (
     ECHOED_KINDS,
     STATUS_KIND,
@@ -64,11 +64,19 @@ class ApiError(EvidenceError):
     """A refusal the server answered: the app's kind, and the contract's code and details."""
 
     def __init__(
-        self, kind: str, message: str, *, status: int, code: str, details: dict[str, Any]
+        self,
+        kind: str,
+        message: str,
+        *,
+        status: int,
+        code: str,
+        details: dict[str, Any],
+        request_id: str = "",
     ) -> None:
         super().__init__(kind, message, code=code)
         self.status = status
         self.details = details
+        self.request_id = request_id  # the server's X-Request-Id, "" when it gave none
 
 
 @dataclass
@@ -196,7 +204,7 @@ class ApiWire:
         if answer.headers.get("content-encoding", "").strip().lower() == "gzip":
             raw = _gunzip(raw, op)
         if answer.status >= 400:
-            raise _refusal(answer.status, raw, op)
+            raise _refusal(answer.status, raw, op, answer.headers)
         kind = answer.headers.get("content-type", "")
         if kind.lower().startswith("multipart/"):
             return _mixed(raw, kind, op)
@@ -213,7 +221,7 @@ class ApiWire:
         except OSError as exc:
             raise os_error(exc) from exc
         if answer.status >= 400:
-            raise _refusal(answer.status, answer.body, op)
+            raise _refusal(answer.status, answer.body, op, answer.headers)
         return Answer(_json_object(answer.body, op), {})
 
     def download(
@@ -233,7 +241,7 @@ class ApiWire:
         except OSError as exc:
             raise os_error(exc) from exc
         if answer.status >= 400:
-            raise _refusal(answer.status, answer.body, op)
+            raise _refusal(answer.status, answer.body, op, answer.headers)
         return answer.status
 
 
@@ -383,13 +391,21 @@ def _json_object(data: bytes, op: str) -> dict[str, Any]:
     return found
 
 
-def _refusal(status: int, body: bytes, op: str) -> ApiError:
+def _refusal(
+    status: int, body: bytes, op: str, headers: Mapping[str, str] | None = None
+) -> ApiError:
     """The envelope (``web_api_spec.md`` §5): the server's sentence is what the user reads; an
-    echoed kind the app knows wins, else the status decides (§5.1)."""
+    echoed kind the app knows wins, else the status decides (§5.1). The server's request id
+    rides along, for the log line of the operation that failed."""
     code, echoed, message, path = envelope(body)
     kind = echoed if echoed in ECHOED_KINDS else STATUS_KIND.get(status, "denied")
     said = message or f"the server answered {status}"
     where = f"{path}, {op}" if path else op
     return ApiError(
-        kind, f"{said} ({where})", status=status, code=code, details=error_details(body)
+        kind,
+        f"{said} ({where})",
+        status=status,
+        code=code,
+        details=error_details(body),
+        request_id=server_log.request_id(headers or {}),
     )

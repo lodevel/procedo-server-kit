@@ -78,6 +78,7 @@ from procedo.core.evidence_store import (
     CURRENT_RUN,
     DELETED,
     NEWEST,
+    NO_PAGE,
     ArtifactInfo,
     EvidenceError,
     EvidenceKey,
@@ -837,6 +838,20 @@ def _send(
     _pushed(store, 1)
 
 
+def _page(store, kind: str, key: str, name: str, generation: int | None = None) -> bytes | None:
+    """An artifact's file as *store* reads it back (one *generation* of it); ``None`` for a
+    report a web server keeps without its page (contract §5.10: only a web server says so, its
+    record is there). Every other storage keeps the page: ``None`` never comes from one."""
+    try:
+        if generation is None:
+            return store.read_artifact(kind, PID, key, name)
+        return store.read_generation(kind, PID, key, name, generation)
+    except EvidenceError as exc:
+        if exc.code != NO_PAGE or kind != "report":
+            raise
+        return None
+
+
 def _sidecar(store, kind: str, key: str, name: str) -> bytes:
     """The record kept beside an artifact, as this PC opens it."""
     path = Path(store.local_path(EvidenceKey(PID, key, kind, name=name)))
@@ -914,12 +929,12 @@ def reports_and_exports_keep_every_generation(s: Storage, monkeypatch) -> None:
     for key in BOARDS:
         reports = [_report(key, i) for i in range(3)]
         assert reader.list_artifacts("report", PID, key) == [reports[-1][2]]
-        assert reader.read_artifact("report", PID, key, "r.html") == reports[-1][0]
+        assert _page(reader, "report", key, "r.html") in (reports[-1][0], None)
         assert _sidecar(reader, "report", key, "r.html") == reports[-1][1]
         generations = reader.list_generations("report", PID, key, "r.html")
         assert generations == [(n, row) for n, (_, _, row) in enumerate(reports, start=1)]
-        read = [reader.read_generation("report", PID, key, "r.html", n) for n in (1, 2, 3)]
-        assert read == [data for data, _, _ in reports]
+        read = [_page(reader, "report", key, "r.html", n) for n in (1, 2, 3)]
+        assert read in ([data for data, _, _ in reports], [None] * 3)
         assert _kind(reader.read_generation, "report", PID, key, "r.html", 4) == "not_found"
     assert [i.name for i in reader.list_artifacts("export", PID, "")] == ["e.docx"]
     assert reader.read_artifact("export", PID, "", "e.docx") == exports[-1][0]
@@ -1024,8 +1039,8 @@ def a_deleted_artifact_goes_with_its_generations_and_comes_back(s: Storage, monk
         assert reader.restore_trash(PID, item.entry) is False
     assert reader.list_trash(PID) == []
     assert reader.list_generations("report", PID, AX_B, "r.html") == before
-    read = [reader.read_generation("report", PID, AX_B, "r.html", n) for n in (1, 2)]
-    assert read == [data for data, _, _ in reports]
+    read = [_page(reader, "report", AX_B, "r.html", n) for n in (1, 2)]
+    assert read in ([data for data, _, _ in reports], [None] * 2)
     assert reader.list_artifacts("report", PID, AX_B) == [reports[-1][2]]
     assert _sidecar(reader, "report", AX_B, "r.html") == reports[-1][1]
     assert reader.read_artifact("export", PID, "", "e.docx") == exports[-1][0]
@@ -1073,14 +1088,14 @@ def a_deleted_artifacts_name_takes_only_its_own_replay(s: Storage, monkeypatch) 
     for item in reader.list_trash(PID):
         assert reader.restore_trash(PID, item.entry) is False
     for (kind, key, name), (data, _sidecar) in sent.items():
-        assert reader.read_artifact(kind, PID, key, name) == data
+        assert _page(reader, kind, key, name) in (data, None if kind == "report" else data)
     assert [n for n, _ in reader.list_generations("report", PID, AX_B, "r.html")] == [1]
 
     store.delete_artifact("report", PID, AX_B, "r.html", deletion=WHY)
     [item] = reader.list_trash(PID)
     assert reader.purge_trash(PID, [item.entry]) == [item.entry]
     _send(store, "report", AX_B, "r.html", b"<html>new</html>", side)  # free again
-    assert reader.read_artifact("report", PID, AX_B, "r.html") == b"<html>new</html>"
+    assert _page(reader, "report", AX_B, "r.html") in (b"<html>new</html>", None)
 
 
 # ---------------------------------------------------------------------------
@@ -1221,6 +1236,7 @@ def _found(rows: list) -> list[tuple]:
 def _newest_first(rows: list[tuple]) -> list[tuple]:
     """The contract's order (data_format.md §6.2): newest start first (a run's from its id, a
     report's when it was made), then the name descending."""
+
     def start(row: tuple) -> str:
         return row[3][:19] if row[0] == "run" else row[5][:19].replace(" ", "T").replace(":", "-")
 

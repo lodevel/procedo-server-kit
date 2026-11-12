@@ -104,7 +104,17 @@ class ApiLibrary:
             key=lambda e: (e.id, e.version),
         )  # fmt: skip
 
-    def download(self, kind: str, item_id: str, version: str, ctx: OpContext | None = None) -> Path:
+    def download(
+        self,
+        kind: str,
+        item_id: str,
+        version: str,
+        ctx: OpContext | None = None,
+        *,
+        into: Path | None = None,
+    ) -> Path:
+        """L2: ``<id>@<version>`` into this PC's library (*into*: under that folder instead,
+        :func:`library_client.install`); its folder."""
         with self.session.operation(ctx):
             try:
                 answer = self.session.call(
@@ -143,7 +153,7 @@ class ApiLibrary:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(content)
 
-        return library_client.install(kind, remote, fill)
+        return library_client.install(kind, remote, fill, into=into)
 
     def publish(self, kind: str, item_id: str, version: str, ctx: OpContext | None = None) -> Entry:
         entry = library_client.to_publish(kind, item_id, version)

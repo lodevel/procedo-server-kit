@@ -182,6 +182,10 @@ class _Bench:
         answer = self.answered("E9 read report", reply)
         if answer is None:
             return
+        if "store_id" not in answer:  # kept as its record alone (§5.10): the record is there
+            if not isinstance(answer.get("info"), dict):
+                self.load.failed(f"{self.serial} report {name}: its record is not read back")
+            return
         data = parse(reply)[1].get(f"sha256:{answer.get('sha256')}")
         if data != self.reports[name]:
             self.load.failed(f"{self.serial} report {name}: other bytes read back")

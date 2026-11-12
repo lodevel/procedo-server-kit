@@ -680,7 +680,7 @@ def _park(store: OutboxStore, entry_id: str, e: dict, reason: str, entry: Path |
             _retrying(entry.unlink)
     except OSError as exc:
         raise os_error(exc) from exc
-    log.error("Outbox entry %s quarantined: %s", entry_id, reason)
+    log.error("Upload %s set aside: %s", entry_id, reason)
 
 
 def _park_under_turn(store: OutboxStore, entry: Path, e: dict, reason: str) -> None:

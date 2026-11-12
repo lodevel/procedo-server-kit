@@ -324,6 +324,20 @@ def python_runtime_cache_root() -> Path:
     return local_root().parent / "python_cache"
 
 
+def imports_root() -> Path:
+    """Where a project zip is unpacked before it goes to its place (``project_zip_import``):
+    one folder per import, this machine's alone, never the destination."""
+    return local_root().parent / "imports"
+
+
+def report_templates_root() -> Path:
+    """The library report templates a project zip carried (``<id>/<version>``), kept on this
+    PC for good to draw the reports that name them again (``report_rebuild``). Beside the local
+    root and not in the library: no template discovery scans it, so a carried template never
+    becomes the template of a future report."""
+    return local_root().parent / "report_templates"
+
+
 def remove_legacy_venvs() -> int:
     """Delete the per-project ``.venv`` folders the one-venv-per-project layout left.
 

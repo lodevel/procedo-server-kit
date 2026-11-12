@@ -85,7 +85,7 @@ from .evidence_form import (
 from .evidence_owner import MARKER
 from .evidence_shared_layout import CONVERSIONS
 from .evidence_shared_manifest import MANIFEST
-from .evidence_store import EvidenceError
+from .evidence_store import EvidenceError, OpContext
 from .evidence_store_fs import os_error
 from .evidence_tree import TreeIO
 from .project_identity import read_project_id
@@ -93,7 +93,7 @@ from .project_identity import read_project_id
 log = logging.getLogger(__name__)
 
 
-class _Progress:
+class Progress:
     """Ticks per file through copy, verify and removal; the total is re-based at
     each phase, so the last tick equals it."""
 
@@ -178,13 +178,19 @@ def transfer_problem(
     if problem is not None:
         return problem
     if scan:
-        links = src.links()
-        if links:
-            return (
-                f"replace the link {src.where(links[0])} with a real folder, then move the "
-                "evidence again"
-            )
+        problem = link_problem(src)
+        if problem:
+            return problem
     return dst.target_problem(project_id)
+
+
+def link_problem(src: EvidenceForm, then: str = "move the evidence again") -> str | None:
+    """Why the evidence of *src* is not read: a link or junction below its folder on this PC,
+    never followed (``None``: there is none). *then* is what to do once it is replaced."""
+    links = src.links()
+    if not links:
+        return None
+    return f"replace the link {src.where(links[0])} with a real folder, then {then}"
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +210,7 @@ def _copy(
     destination: EvidenceForm,
     planned: list[Rel],
     scratch: Path,
-    steps: _Progress,
+    steps: Progress,
     check_cancel: Callable[[], None],
 ) -> tuple[dict[Rel, Held], int, int, dict[Rel, str], list[Rel]]:
     """Every planned file into the destination, unit by unit: ``(held, copied, present,
@@ -244,10 +250,10 @@ def _copy(
     return held, copied, present, kept, derived
 
 
-def _verify(
+def verify(
     destination: EvidenceForm,
     held: dict[Rel, Held],
-    steps: _Progress,
+    steps: Progress,
     check_cancel: Callable[[], None],
 ) -> None:
     """Every carried file, proved from the DESTINATION's own reading: it lists the file, and
@@ -372,7 +378,7 @@ def _remove_source(
     destination: EvidenceForm,
     held: dict[Rel, Held],
     before: dict[Rel, Any],
-    steps: _Progress,
+    steps: Progress,
 ) -> tuple[int, list[str]]:
     """Empty the source folder by the rule of :func:`_still_held`, then its folders.
     Everything else — written, changed, no longer held, undeletable, or a link — stays
@@ -439,7 +445,7 @@ def _still_ours(project_root: Path, live: dict[str, Any]) -> None:
         )
 
 
-def _let_go(source: EvidenceForm) -> None:
+def let_go(source: EvidenceForm) -> None:
     """What the source's form holds for the pass, let go (a web server's copy on this PC)."""
     release = getattr(source, "release", None)
     if release is not None:
@@ -461,7 +467,7 @@ def _uploads_follow(source: Any, destination: Any, project_id: str) -> None:
     )
 
 
-def _not_carried(kept: dict[Rel, str]) -> list[str]:
+def kept_lines(kept: dict[Rel, str]) -> list[str]:
     return [f"{_shown(rel)} ({why})" for rel, why in sorted(kept.items())]
 
 
@@ -537,18 +543,19 @@ def transfer_evidence(
     # re-read under it: "nothing re-pointed the project" is a check-then-write that two
     # benches passed together, each then emptying the source into its own store.
     with contextlib.ExitStack() as held_open, src.move_lock(project_id, cancel):
-        held_open.callback(_let_go, src)
+        held_open.callback(let_go, src)
         _still_ours(project_root, live)
         try:
             planned = src.walk()
             before = src.stamps(planned)
+            dst.pass_ctx = OpContext(cancel=cancel or threading.Event())  # this pass's
             dst.prepare(project_id, src.label)
-            steps = _Progress(2 * len(planned), progress)
+            steps = Progress(2 * len(planned), progress)
             with tempfile.TemporaryDirectory(prefix="evidence-transfer-") as scratch:
                 held, copied, present, kept, derived = _copy(
                     src, dst, planned, Path(scratch), steps, check_cancel
                 )
-            _verify(dst, held, steps, check_cancel)
+            verify(dst, held, steps, check_cancel)
             changed = _first_change(before, src.stamps(src.walk()))
             if changed is not None:
                 activity = "being copied" if copy_only else "moving"
@@ -562,7 +569,7 @@ def transfer_evidence(
             check_cancel()  # the last point of return: after the switch the move completes
             _still_ours(project_root, live)
             counts = {"copied": copied, "present": present, "not_carried": len(kept)}
-            not_carried = _not_carried(kept)
+            not_carried = kept_lines(kept)
             if copy_only:
                 dst.finish(counts)
                 return TransferReport(

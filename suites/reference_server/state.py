@@ -157,8 +157,11 @@ class State:
         people: list[dict] | None = None,
         boards: dict[str, list[dict]] | None = None,
         unnamed_refused: bool = False,
+        report_pages: bool = True,
     ) -> None:
         self.lock = threading.RLock()
+        #: False: a report is kept as its record alone, its page dropped (§5.10, its choice).
+        self.report_pages = report_pages
         self.users = parse_tokens(tokens)
         # The server's users U1 lists (§6.8), and the optional calls it offers (§6.1).
         self.people = offer.check_users(people)
